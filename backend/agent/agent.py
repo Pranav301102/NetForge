@@ -1,5 +1,8 @@
 """
-Forge reliability agent — powered by AWS Strands + MiniMax M2.5 (primary) / Bedrock Claude (fallback).
+Forge reliability agent — dual-model architecture.
+
+Claude (Bedrock) = Main Orchestrator — handles all tool calls and user-facing responses.
+MiniMax M2.5 = Background Sub-Model — runs async for deeper pattern analysis.
 
 The agent:
 1. Pulls observability data via the Datadog MCP server
@@ -14,10 +17,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import random
 import re
 import shutil
+import traceback
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import AsyncIterator
@@ -51,14 +56,18 @@ from agent.tools.memory_tools import (
     get_optimization_recommendations,
 )
 
+log = logging.getLogger("forge.agent")
+
 BEDROCK_MODEL_ID = os.getenv(
     "BEDROCK_MODEL_ID",
-    "us.anthropic.claude-sonnet-4-5-20251001-v1:0",
+    "anthropic.claude-3-5-sonnet-20241022-v2:0",
 )
+AWS_REGION = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-west-2"))
 
 MINIMAX_API_KEY = os.getenv("MINIMAX_API", "")
 MINIMAX_MODEL = os.getenv("MINIMAX_MODEL", "MiniMax-M2.5")
 MINIMAX_BASE_URL = "https://api.minimax.io/v1"
+MINIMAX_BACKGROUND_TIMEOUT = int(os.getenv("MINIMAX_TIMEOUT", "60"))  # seconds
 
 DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in ("true", "1", "yes")
 
@@ -180,14 +189,33 @@ def _build_datadog_mcp_client() -> MCPClient:
 # Agent factory
 # ---------------------------------------------------------------------------
 
-def _build_model():
+def _build_orchestrator_model():
     """
-    Build the LLM model, preferring MiniMax M2.5 via LiteLLM.
-    Falls back to Bedrock Claude if MiniMax key is not set.
+    Build the main orchestrator LLM — always Bedrock Claude.
+    Claude handles all tool calls, user-facing responses, and analysis prompts.
     """
-    if MINIMAX_API_KEY:
+    from strands.models.bedrock import BedrockModel
+    print(f"[Forge] Orchestrator: Bedrock Claude ({BEDROCK_MODEL_ID}) in {AWS_REGION}")
+    return BedrockModel(
+        model_id=BEDROCK_MODEL_ID,
+        region_name=AWS_REGION,
+        temperature=0.1,
+        max_tokens=4096,
+    )
+
+
+def _build_background_model():
+    """
+    Build the background sub-model — MiniMax M2.5 via LiteLLM.
+    Returns None if MINIMAX_API key is not set.
+    Used for async background analysis (no tool calls, just reasoning).
+    """
+    if not MINIMAX_API_KEY:
+        print("[Forge] Background model: disabled (no MINIMAX_API key)")
+        return None
+    try:
         from strands.models.litellm import LiteLLMModel
-        print(f"[Forge] Using MiniMax {MINIMAX_MODEL} via LiteLLM")
+        print(f"[Forge] Background model: MiniMax {MINIMAX_MODEL} via LiteLLM")
         return LiteLLMModel(
             client_args={
                 "api_key": MINIMAX_API_KEY,
@@ -196,23 +224,128 @@ def _build_model():
             model_id=f"openai/{MINIMAX_MODEL}",
             params={
                 "temperature": 0.1,
-                "max_tokens": 16384,  # MiniMax M2.5 uses thinking tokens — need headroom
+                "max_tokens": 16384,
             },
         )
-    else:
-        from strands.models.bedrock import BedrockModel
-        print("[Forge] Using Bedrock Claude (no MINIMAX_API key found)")
-        return BedrockModel(
-            model_id=BEDROCK_MODEL_ID,
-            region_name=os.getenv("AWS_REGION", "us-east-1"),
-            temperature=0.1,
-            max_tokens=4096,
+    except Exception as e:
+        print(f"[Forge] Background model init failed: {e} — running without background analysis")
+        return None
+
+
+# Cached background model instance (lazy-init)
+_background_model_instance = None
+_background_model_loaded = False
+
+
+def _get_background_model():
+    """Lazy singleton for the background MiniMax model."""
+    global _background_model_instance, _background_model_loaded
+    if not _background_model_loaded:
+        _background_model_instance = _build_background_model()
+        _background_model_loaded = True
+    return _background_model_instance
+
+
+async def _run_minimax_background(prompt: str, context_label: str = "background") -> str | None:
+    """
+    Run MiniMax M2.5 asynchronously in the background with timeout protection.
+
+    - Does NOT block the main agent response
+    - Results are returned as text (caller stores them in memory)
+    - Protected by MINIMAX_BACKGROUND_TIMEOUT (default 60s)
+    - Any failure is logged but never propagated
+    """
+    bg_model = _get_background_model()
+    if bg_model is None:
+        return None
+
+    async def _invoke():
+        bg_agent = Agent(
+            model=bg_model,
+            system_prompt=(
+                "You are a background analysis sub-agent. Provide deep pattern analysis "
+                "and optimization insights. Output ONLY valid JSON — no thinking tags, "
+                "no markdown fences. Be concise and specific with metric values."
+            ),
+            tools=[],  # No tools — pure reasoning
         )
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, lambda: bg_agent(prompt))
+        return _strip_thinking(str(result))
+
+    try:
+        text = await asyncio.wait_for(_invoke(), timeout=MINIMAX_BACKGROUND_TIMEOUT)
+        log.info("[Forge] MiniMax background (%s) completed: %d chars", context_label, len(text or ""))
+        return text
+    except asyncio.TimeoutError:
+        log.warning("[Forge] MiniMax background (%s) timed out after %ds", context_label, MINIMAX_BACKGROUND_TIMEOUT)
+        return None
+    except Exception as e:
+        log.warning("[Forge] MiniMax background (%s) failed: %s", context_label, e)
+        return None
+
+
+async def _fire_minimax_background(service_name: str, main_report: dict) -> None:
+    """
+    Fire-and-forget: run MiniMax in background to generate deeper insights
+    from the main Claude analysis, then store results in memory.
+    """
+    from memory.store import add_insight, add_pattern
+
+    prompt = f"""Analyze this service health report and identify deeper patterns, \
+predictive insights, and optimization opportunities that the primary analysis may have missed.
+
+Service: {service_name}
+Report: {json.dumps(main_report, indent=2)}
+
+Return a JSON object:
+{{
+  "deep_insights": [
+    {{"category": "performance|reliability|cost|optimization",
+      "severity": "low|medium|high|critical",
+      "title": "...", "insight": "...", "recommendation": "..."}}
+  ],
+  "patterns": [
+    {{"type": "...", "description": "...", "confidence": 0.0-1.0, "recommendation": "..."}}
+  ]
+}}"""
+
+    text = await _run_minimax_background(prompt, context_label=f"insights-{service_name}")
+    if not text:
+        return
+
+    try:
+        start = text.index("{")
+        end = text.rindex("}") + 1
+        data = json.loads(text[start:end])
+
+        for ins in data.get("deep_insights", []):
+            add_insight(service_name, {
+                "category": ins.get("category", "optimization"),
+                "severity": ins.get("severity", "low"),
+                "title": f"[MiniMax] {ins.get('title', 'Background insight')}",
+                "insight": ins.get("insight", ""),
+                "evidence": json.dumps(main_report.get("validation", {})),
+                "recommendation": ins.get("recommendation", ""),
+            })
+
+        for pat in data.get("patterns", []):
+            add_pattern(service_name, {
+                "type": pat.get("type", "detected"),
+                "description": f"[MiniMax] {pat.get('description', '')}",
+                "confidence": pat.get("confidence", 0.5),
+                "recommendation": pat.get("recommendation", ""),
+            })
+
+        log.info("[Forge] MiniMax stored %d insights, %d patterns for %s",
+                 len(data.get("deep_insights", [])), len(data.get("patterns", [])), service_name)
+    except (json.JSONDecodeError, ValueError):
+        log.warning("[Forge] MiniMax returned unparseable response for %s", service_name)
 
 
 def build_agent() -> Agent:
-    """Build and return a configured Strands agent with MiniMax or Bedrock."""
-    model = _build_model()
+    """Build and return a configured Strands agent with Bedrock Claude as orchestrator."""
+    model = _build_orchestrator_model()
 
     graph_tools = [
         get_service_dependencies,
@@ -529,13 +662,17 @@ async def _generate_demo_insights(service_name: str | None = None) -> dict:
 async def analyze_service(service_name: str) -> dict:
     """
     Run a full analysis on a service and return a structured health report.
-    Uses Bedrock agent when available, falls back to smart demo mode.
+
+    Architecture:
+    - Claude (Bedrock) orchestrates: calls tools, generates the report
+    - MiniMax (background): fires async for deeper pattern analysis
+    - Falls back to demo mode if Bedrock is unavailable
     """
     from memory.store import record_analysis, update_baseline
 
     run_id = str(uuid.uuid4())[:8]
 
-    # Try the real agent first
+    # Try the real agent (Claude orchestrator) first
     try:
         agent = build_agent()
 
@@ -581,6 +718,7 @@ Return a JSON object with this exact structure:
         report = json.loads(text[start:end])
 
     except Exception as e:
+        log.warning("[Forge] Claude orchestrator failed, using demo mode: %s", e)
         # Smart demo fallback — generate a realistic report
         report = _demo_analyze_service(service_name, run_id)
 
@@ -601,6 +739,9 @@ Return a JSON object with this exact structure:
 
     # Also generate insights for this service
     _generate_demo_insights_for_service(service_name)
+
+    # Fire MiniMax in background for deeper analysis (non-blocking)
+    asyncio.create_task(_fire_minimax_background(service_name, report))
 
     return report
 
@@ -694,9 +835,13 @@ def _demo_analyze_service(service_name: str, run_id: str) -> dict:
 async def generate_insights(service_name: str | None = None) -> dict:
     """
     Run a deeper analysis focused on optimization insights.
-    Uses Bedrock when available, falls back to rich demo generation.
+
+    Architecture:
+    - Claude orchestrates tool calls and generates the primary report
+    - MiniMax runs in background for supplementary pattern detection
+    - Falls back to demo mode if Claude is unavailable
     """
-    # Try the real agent
+    # Try the real agent (Claude orchestrator)
     try:
         from memory.store import load_memory, record_analysis
         agent = build_agent()
@@ -770,10 +915,16 @@ Return a JSON summary:
             "insights_generated": [],
         })
 
+        # Fire MiniMax in background for each service
+        for svc in services_to_analyze:
+            asyncio.create_task(
+                _fire_minimax_background(svc, {"source": "generate_insights", "report": report})
+            )
+
         return report
 
-    except Exception:
-        # Fall back to demo mode
+    except Exception as e:
+        log.warning("[Forge] Claude orchestrator failed for insights, using demo mode: %s", e)
         return await _generate_demo_insights(service_name)
 
 
@@ -781,6 +932,9 @@ async def chat_with_agent(user_message: str, context: dict | None = None) -> Asy
     """
     Stream a conversational response from the agent.
     Used by the CopilotKit chat endpoint.
+
+    Uses Claude orchestrator only — chat is real-time and should not
+    wait for MiniMax background analysis.
     """
     agent = build_agent()
 

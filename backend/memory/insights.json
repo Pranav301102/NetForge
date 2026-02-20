@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-02-20T20:25:56.312399+00:00",
+  "last_updated": "2026-02-20T21:25:09.083361+00:00",
   "services": {
     "checkout-service": {
       "baseline_metrics": {
@@ -139,13 +139,13 @@
     },
     "payment-service": {
       "baseline_metrics": {
-        "p99_latency_ms": 1094,
-        "avg_latency_ms": 472,
-        "health_score": 11,
-        "cpu_usage_percent": 81,
-        "rpm": 2904,
-        "error_rate_percent": 7.11,
-        "measured_at": "2026-02-20T20:25:56.191880+00:00"
+        "p99_latency_ms": 906,
+        "avg_latency_ms": 334,
+        "health_score": 25,
+        "cpu_usage_percent": 47,
+        "rpm": 784,
+        "error_rate_percent": 6.16,
+        "measured_at": "2026-02-20T21:25:09.043346+00:00"
       },
       "patterns": [
         {
@@ -161,12 +161,12 @@
         {
           "type": "latency_spike",
           "description": "P99 latency spikes to 3x baseline every 4 hours, lasting 2-3 minutes. Correlates with garbage collection pauses \u2014 heap usage reaches 92% before GC triggers.",
-          "confidence": 0.8392746632043588,
+          "confidence": 0.8592746632043589,
           "recommendation": "Tune JVM GC settings: switch from G1GC to ZGC for sub-millisecond pause times. Increase heap from 2GB to 3GB.",
           "id": "pat-8136e6b9",
           "first_detected": "2026-02-20T20:23:25.863825+00:00",
-          "last_confirmed": "2026-02-20T20:23:25.863833+00:00",
-          "occurrences": 1
+          "last_confirmed": "2026-02-20T21:25:09.083352+00:00",
+          "occurrences": 2
         },
         {
           "type": "periodic_overload",
@@ -181,11 +181,21 @@
         {
           "type": "cascade_risk",
           "description": "When payment-gateway response time exceeds 2000ms, order-service and checkout-service degrade within 30 seconds. Observed in 18 of the last 20 incidents.",
-          "confidence": 0.961323930612583,
+          "confidence": 0.981323930612583,
           "recommendation": "Add 1500ms timeout with circuit breaker on payment-gateway calls. Implement retry with exponential backoff (100ms, 200ms, 400ms max).",
           "id": "pat-fbca21a6",
           "first_detected": "2026-02-20T20:25:56.312372+00:00",
-          "last_confirmed": "2026-02-20T20:25:56.312391+00:00",
+          "last_confirmed": "2026-02-20T21:25:09.071113+00:00",
+          "occurrences": 2
+        },
+        {
+          "type": "cascade_risk",
+          "description": "External payment gateway dependency consistently showing high latency (1200ms+) without circuit breaker protection, causing cascade effects to multiple upstream services. Pattern shows consistent impact on checkout-service, wallet-service, and order-service.",
+          "confidence": 0.95,
+          "recommendation": "Implement circuit breaker pattern with 1500ms timeout and exponential backoff retry strategy (100ms, 200ms, 400ms max). Consider async payment processing for non-critical flows.",
+          "id": "pat-d0b32e1a",
+          "first_detected": "2026-02-20T21:24:53.442126+00:00",
+          "last_confirmed": "2026-02-20T21:24:53.442145+00:00",
           "occurrences": 1
         }
       ],
@@ -265,6 +275,39 @@
           "recommendation": "Move analytics and notification dispatch to async queue processing. Expected p99 reduction of 180ms for end-user requests.",
           "id": "ins-cbd763d5",
           "timestamp": "2026-02-20T20:25:56.264653+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Critical: Payment Gateway Cascade Risk",
+          "insight": "Payment service is experiencing critical degradation due to external payment gateway latency. No circuit breaker protection is leading to cascade failures affecting multiple upstream services. Current error rate of 7.11% exceeds SLO threshold.",
+          "evidence": "{\"p99_latency_ms\": 1094, \"error_rate\": 7.11, \"cpu_usage\": 81, \"affected_services\": [\"checkout-service\", \"wallet-service\", \"order-service\"], \"payment_gateway_latency\": 1200}",
+          "recommendation": "1. Implement circuit breaker with 1500ms timeout\n2. Add exponential backoff retry (100ms, 200ms, 400ms)\n3. Consider async processing for non-critical payment flows\n4. Add monitoring alert for payment gateway latency > 1000ms",
+          "id": "ins-6ac547df",
+          "timestamp": "2026-02-20T21:25:01.470103+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Cascade failure risk \u2014 deep dependency chain",
+          "insight": "Service sits on a dependency chain 5 hops deep. A failure at the deepest dependency would cascade through 3 services. No bulkhead isolation exists between the critical and non-critical paths.",
+          "evidence": "{\"p99_latency_ms\": 906, \"avg_latency_ms\": 334, \"cpu_usage_percent\": 47, \"rpm\": 784, \"error_rate_percent\": 6.16, \"health_score\": 25}",
+          "recommendation": "Implement bulkhead pattern to isolate critical payment path from non-critical analytics path. Add async fallback for non-essential downstream calls.",
+          "id": "ins-2771a814",
+          "timestamp": "2026-02-20T21:25:09.053343+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "low",
+          "title": "Async processing candidate",
+          "insight": "42% of request processing time is spent on non-blocking operations (logging, analytics events, notification dispatch). These operations do not affect the response to the end user.",
+          "evidence": "{\"p99_latency_ms\": 906, \"avg_latency_ms\": 334, \"cpu_usage_percent\": 47, \"rpm\": 784, \"error_rate_percent\": 6.16, \"health_score\": 25}",
+          "recommendation": "Move analytics and notification dispatch to async queue processing. Expected p99 reduction of 180ms for end-user requests.",
+          "id": "ins-79bf1566",
+          "timestamp": "2026-02-20T21:25:09.062533+00:00",
           "status": "open"
         }
       ]
@@ -487,6 +530,20 @@
       "insights_generated": [],
       "session_id": "sess-dafef270",
       "timestamp": "2026-02-20T20:25:56.089187+00:00"
+    },
+    {
+      "trigger": "manual",
+      "services_analyzed": [
+        "payment-service"
+      ],
+      "findings_summary": "payment-service is in critical state with p99 at 976ms and cascading failures affecting upstream services. Root cause: upstream service flooding with retry storms after timeout in api-gateway. Executed emergency scaling and circuit breaker activation. Recovery validated \u2014 p99 dropped to 198ms.",
+      "actions_taken": [
+        "scale_ecs",
+        "update_ssm"
+      ],
+      "insights_generated": [],
+      "session_id": "sess-d4a28c90",
+      "timestamp": "2026-02-20T21:25:09.001394+00:00"
     }
   ]
 }
