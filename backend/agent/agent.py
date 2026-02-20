@@ -17,6 +17,7 @@ import json
 import os
 import random
 import re
+import shutil
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import AsyncIterator
@@ -33,7 +34,15 @@ from agent.tools.neo4j_tools import (
     get_service_dependencies,
     get_service_health_from_graph,
 )
-from agent.tools.testsprite import validate_service_recovery, validate_network_health
+from agent.tools.testsprite import validate_service_recovery, validate_scale_stability
+from agent.tools.datadog_tools import (
+    get_datadog_metrics_summary,
+    query_datadog_metric,
+    get_datadog_infrastructure_health,
+    get_datadog_events,
+    get_datadog_container_metrics,
+    get_datadog_monitor_alerts,
+)
 from agent.tools.memory_tools import (
     store_insight,
     store_pattern,
@@ -70,17 +79,47 @@ You are the most advanced SRE agent ever built. You don't just react — you PRE
 5. **Memory & Learning**: You have PERSISTENT MEMORY. Use it. Always check past incidents. Always store new findings. Reference history when explaining.
 6. **Cost Optimization**: Flag over-provisioned services, idle resources, and scaling inefficiencies.
 
+## Live Datadog Data Available
+The connected Datadog account (datadoghq.com) is a Shopist AKS/Kubernetes e-commerce platform with:
+- **2,944 active metrics** including:
+  - `container.cpu.usage`, `container.cpu.throttled`, `container.cpu.limit`
+  - `container.memory.usage`, `container.memory.limit`
+  - `cassandra.*` — latency percentiles, dropped messages, pending tasks
+  - `redis.mem.used`, `redis.mem.maxmemory`
+  - `postgresql.percent_usage_connections`, `postgresql.replication_delay`
+  - `appsec_generator.signal.trigger` — AppSec attack signals
+  - `kubernetes.containers.restarts`, `kubernetes.memory.*`
+- **1000+ events/hour**: OOMKills, Kubernetes deployment updates, pod health failures, Containerd events
+- **Monitors** covering: Postgres connections, Redis memory, replication delay
+- **Infrastructure**: Azure AKS cluster `prod-aks-shopist-a-northcentralus`, tag `env:prod`, `datadog_app:shopist`
+
+Use `get_datadog_monitor_alerts` to check firing alerts first. Use `get_datadog_events` to correlate with K8s events.
+Use `query_datadog_metric` for time-series data. Use `get_datadog_container_metrics` for CPU/memory pressure.
+
 ## MANDATORY Workflow (every analysis)
 1. ALWAYS call recall_service_history FIRST — check what you already know
 2. ALWAYS call recall_similar_incidents — look for cross-service patterns
-3. Get live data from Neo4j (health, dependencies, blast radius, recent changes)
-4. Compare current state vs. stored baselines — flag deviations
-5. Identify anomalies, root cause, blast radius
-6. Execute remediation if needed (least invasive first)
-7. Validate recovery via TestSprite
-8. ALWAYS call store_insight to persist findings (even for healthy services — "service is healthy" is useful data)
-9. ALWAYS call store_pattern when you detect recurring behavior
-10. Generate actionable recommendations
+3. Call get_datadog_monitor_alerts — see what Datadog is currently alerting on
+4. Call get_datadog_events — correlate events with any anomalies (look for OOMKills, degraded pods)
+5. Get live data from Neo4j (health, dependencies, blast radius, recent changes)
+6. Optionally call query_datadog_metric for specific metric deep-dives
+7. Compare current state vs. stored baselines — flag deviations
+8. Identify anomalies, root cause, blast radius
+9. Execute remediation if needed (least invasive first)
+10. If scaling: call scale_ecs_service, then validate_scale_stability for network stability
+11. If rollback: call trigger_codedeploy_rollback, then validate_service_recovery
+12. ALWAYS call store_insight to persist findings
+13. ALWAYS call store_pattern when you detect recurring behavior
+14. Generate actionable recommendations
+
+## Scale + TestSprite Stability Flow
+When scaling a service (up or down):
+1. Call `scale_ecs_service` with the new desired count
+2. Immediately call `validate_scale_stability` with:
+   - scale_direction: "up" or "down"
+   - instance_count_before / instance_count_after
+   - stabilization_wait_seconds: 30 (default)
+3. If `network_stable` is false, store a reliability insight and consider reverting
 
 ## Insight Categories
 - **performance**: Latency spikes, slow queries, bottleneck dependencies
@@ -108,33 +147,30 @@ Key principles:
 # ---------------------------------------------------------------------------
 
 def _build_datadog_mcp_client() -> MCPClient:
+    import glob as _glob
+    _node_bin_candidates = (
+        _glob.glob(os.path.expanduser("~/.nvm/versions/node/*/bin"))
+        + ["/usr/local/bin"]
+    )
+    _node_bin = next(
+        (p for p in _node_bin_candidates if os.path.exists(os.path.join(p, "node"))),
+        "",
+    )
+    _npx_path = os.path.join(_node_bin, "npx") if _node_bin else (shutil.which("npx") or "npx")
+    _augmented_path = f"{_node_bin}:{os.environ.get('PATH', '')}" if _node_bin else os.environ.get("PATH", "")
+
     return MCPClient(
         lambda: stdio_client(
             StdioServerParameters(
-                command="npx",
+                command=_npx_path,
                 args=["-y", "@winor30/mcp-server-datadog"],
                 env={
                     **os.environ,
+                    "PATH": _augmented_path,
                     "DATADOG_API_KEY": os.getenv("DATADOG_API_KEY", ""),
                     "DATADOG_APP_KEY": os.getenv("DATADOG_APP_KEY", ""),
                     "DATADOG_SITE": os.getenv("DATADOG_SITE", "datadoghq.com"),
                 },
-            )
-        )
-    )
-
-
-# ---------------------------------------------------------------------------
-# TestSprite MCP client (for real backend API testing via TestSprite)
-# ---------------------------------------------------------------------------
-
-def _build_testsprite_mcp_client() -> MCPClient:
-    return MCPClient(
-        lambda: stdio_client(
-            StdioServerParameters(
-                command="npx",
-                args=["-y", "@testsprite/testsprite-mcp@latest"],
-                env={**os.environ, "API_KEY": os.getenv("TESTSPRITE_API_KEY", "")},
             )
         )
     )
@@ -192,7 +228,7 @@ def build_agent() -> Agent:
         update_ssm_parameter,
     ]
 
-    validation_tools = [validate_service_recovery, validate_network_health]
+    validation_tools = [validate_service_recovery, validate_scale_stability]
 
     memory_tools = [
         store_insight,
@@ -202,14 +238,27 @@ def build_agent() -> Agent:
         get_optimization_recommendations,
     ]
 
-    tools = graph_tools + aws_tools + validation_tools + memory_tools
+    # Direct Datadog REST tools — always available when API key is set
+    dd_direct_tools = []
     if os.getenv("DATADOG_API_KEY"):
-        dd_mcp = _build_datadog_mcp_client()
-        tools = [dd_mcp] + tools
+        dd_direct_tools = [
+            get_datadog_metrics_summary,
+            query_datadog_metric,
+            get_datadog_infrastructure_health,
+            get_datadog_events,
+            get_datadog_container_metrics,
+            get_datadog_monitor_alerts,
+        ]
 
-    if os.getenv("TESTSPRITE_API_KEY"):
-        ts_mcp = _build_testsprite_mcp_client()
-        tools = [ts_mcp] + tools
+    tools = dd_direct_tools + graph_tools + aws_tools + validation_tools + memory_tools
+
+    # Also attach the MCP client for any MCP-native tools (e.g. log search)
+    if os.getenv("DATADOG_API_KEY"):
+        try:
+            dd_mcp = _build_datadog_mcp_client()
+            tools = [dd_mcp] + tools
+        except Exception as e:
+            print(f"[Forge] Datadog MCP client unavailable: {e} — using direct REST tools only")
 
     return Agent(
         model=model,

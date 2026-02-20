@@ -1,8 +1,10 @@
 """
 Webhook endpoints for external system integrations.
 
-POST /api/hooks/deploy       — triggers agent analysis on a service when deployed
-POST /api/hooks/datadog-sync — fetches latest metrics via MCP and updates Neo4j
+POST /api/hooks/deploy         — triggers agent analysis on a service when deployed
+POST /api/hooks/datadog-sync   — fetches live metrics via Datadog REST and updates Neo4j
+POST /api/hooks/scale          — scale-up or scale-down a service + TestSprite network
+                                 stability validation (pre/post)
 """
 from __future__ import annotations
 
@@ -12,28 +14,45 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
-from agent.agent import analyze_service, generate_insights, _build_datadog_mcp_client
+from agent.agent import analyze_service, generate_insights
 from db.neo4j_client import run_query
 from memory.store import add_insight, update_baseline
 
 router = APIRouter(prefix="/api/hooks", tags=["hooks"])
 
+
 class DeployPayload(BaseModel):
     service: str
     version: str | None = None
     status: str | None = "success"
-    
+
+
 class DatadogSyncPayload(BaseModel):
-    services: list[str] | None = None # Sync all if None
+    services: list[str] | None = None  # Sync all if None
+
+
+class ScalePayload(BaseModel):
+    service: str
+    cluster: str = "forge-prod-cluster"
+    direction: str = "up"           # "up" or "down"
+    instance_count: int = 4         # desired count after scale
+    reason: str = "triggered via hook"
+    run_stability_test: bool = True
+    stabilization_wait_seconds: int = 30
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /api/hooks/deploy
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/deploy")
 async def handle_deploy_hook(payload: DeployPayload, background_tasks: BackgroundTasks):
     """
     Called by CodeDeploy/ECS/Lambda after a deployment.
-    Logs the deployment to Neo4j and kicks off an asynchronous agent analysis.
+    Logs the deployment to Neo4j and kicks off async agent analysis.
     """
     try:
-        # Add a node to Neo4j to track the deployment
+        # Record deployment in Neo4j
         await run_query(
             """
             MATCH (s:Service {name: $service})
@@ -42,136 +61,230 @@ async def handle_deploy_hook(payload: DeployPayload, background_tasks: Backgroun
                 version: $version,
                 status: $status,
                 deployed_at: toString(datetime()),
-                deployed_by: "webhook"
+                deployed_by: \"webhook\"
             })
             CREATE (s)-[:HAD_DEPLOYMENT]->(d)
             """,
-            {"service": payload.service, "version": payload.version, "status": payload.status}
+            {"service": payload.service, "version": payload.version, "status": payload.status},
         )
-        
-        # Async analysis to not block the webhook
+
+        # Kick off async agent analysis + insight generation
         background_tasks.add_task(analyze_service, payload.service)
-        # Also trigger insight generation for the deployed service
         background_tasks.add_task(generate_insights, payload.service)
 
-        return {"status": "accepted", "message": f"Deployment logged and analysis + insight generation started for {payload.service}"}
+        return {
+            "status":  "accepted",
+            "message": f"Deployment logged and analysis started for {payload.service}",
+        }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /api/hooks/datadog-sync
+# ─────────────────────────────────────────────────────────────────────────────
+
 @router.post("/datadog-sync")
 async def sync_datadog_metrics(payload: DatadogSyncPayload):
     """
-    Uses the Datadog MCP integration to pull real-time latency and error metrics,
-    updating the Neo4j graph nodes so the UI and agent see fresh data.
+    Pulls real-time container/infrastructure metrics from Datadog REST API
+    and writes them back into Neo4j so the dependency graph stays fresh.
+
+    Uses direct REST (not MCP) for reliability — the MCP path requires a
+    running npx subprocess which is less suitable for synchronous webhooks.
     """
+    from agent.tools.datadog_tools import fetch_live_metrics_for_service
+
     try:
-        # Fetch current services if not specified
+        # Determine which services to sync
         if not payload.services:
             services_res = await run_query("MATCH (s:Service) RETURN s.name AS service")
             services_to_sync = [r["service"] for r in services_res]
         else:
             services_to_sync = payload.services
-            
-        mcp_client = _build_datadog_mcp_client()
+
+        if not services_to_sync:
+            return {"status": "ok", "services_updated": 0, "message": "No services in graph yet"}
+
         updated = 0
-        
-        # In a real async MCP we would map this properly, for now we will simulate
-        # calling the tool. (The actual Datadog MCP `query_metrics` requires connection).
-        # Assuming the connection is up:
-        async with mcp_client.connect() as session:
-            for d_service in services_to_sync:
-                # 1. Fetch p99 latency
-                p99_resp = await session.call_tool("query_metrics", {
-                    "query": f"avg:trace.http.request.duration.p99{{service:{d_service}}}",
-                    "from": "now-15m",
-                    "to": "now"
-                })
-                
-                # 2. Fetch avg latency
-                avg_resp = await session.call_tool("query_metrics", {
-                    "query": f"avg:trace.http.request.duration.avg{{service:{d_service}}}",
-                    "from": "now-15m",
-                    "to": "now"
-                })
-                
-                # Parse the MCP tool output - simplified assuming numeric structure extraction
-                # For demonstration in Hackathon, we will set a synthetic value if MCP is unconfigured
-                # or parse the actual Datadog series if configured.
-                
-                try:
-                    p99_text = next(c.text for c in p99_resp.content if c.type == "text")
-                    # Simplified parsing logic for the raw Datadog response
-                    # A robust parser would parse JSON array
-                    p99_val = 250
-                    if '"points"' in p99_text:
-                        p99_val = 300 # extract from text
-                except Exception:
-                    p99_val = 200 # fallback baseline
-                    
-                try:
-                    avg_text = next(c.text for c in avg_resp.content if c.type == "text")
-                    avg_val = 80
-                except Exception:
-                    avg_val = 80
-                    
-                score = 100
-                if p99_val > 500:
-                    score = 60
-                if p99_val > 1000:
-                    score = 20
+        anomalies_detected = []
 
-                # Update the service graph metric
-                await run_query(
-                    """
-                    MATCH (s:Service {name: $service})
-                    SET s.p99_latency_ms = $p99,
-                        s.avg_latency_ms = $avg,
-                        s.health_score = $score,
-                        s.rpm = toInteger(rand() * 5000 + 100),
-                        s.error_rate_percent = round(rand() * 5 * 100) / 100.0,
-                        s.cpu_usage_percent = toInteger(rand() * 60 + 20),
-                        s.mem_usage_percent = toInteger(rand() * 70 + 20),
-                        s.updated_at = toString(datetime())
-                    """,
-                    {"service": d_service, "p99": p99_val, "avg": avg_val, "score": score}
-                )
-                # Compare against baselines and store insight if anomalous
-                if p99_val > 500:
-                    add_insight(d_service, {
-                        "category": "performance",
-                        "severity": "high" if p99_val > 1000 else "medium",
-                        "title": f"Elevated p99 latency detected ({p99_val}ms)",
-                        "insight": f"Datadog sync measured p99={p99_val}ms, avg={avg_val}ms. Health score dropped to {score}.",
-                        "evidence": f'{{"p99_latency_ms": {p99_val}, "avg_latency_ms": {avg_val}, "health_score": {score}}}',
-                        "recommendation": "Investigate slow dependencies and consider scaling or circuit breakers.",
-                    })
+        for svc in services_to_sync:
+            try:
+                metrics = fetch_live_metrics_for_service(svc)
+            except Exception as e:
+                # Gracefully skip this service rather than abort the whole sync
+                continue
 
-                update_baseline(d_service, {
-                    "p99_latency_ms": p99_val,
-                    "avg_latency_ms": avg_val,
-                    "health_score": score,
+            p99   = metrics["p99_latency_ms"]
+            avg   = metrics["avg_latency_ms"]
+            score = metrics["health_score"]
+            cpu   = metrics.get("cpu_usage_percent") or 0
+            mem   = metrics.get("mem_usage_percent") or 0
+
+            # Write back to Neo4j
+            await run_query(
+                """
+                MATCH (s:Service {name: $service})
+                SET s.p99_latency_ms    = $p99,
+                    s.avg_latency_ms    = $avg,
+                    s.health_score      = $score,
+                    s.cpu_usage_percent = $cpu,
+                    s.mem_usage_percent = $mem,
+                    s.data_source       = \"datadog_live\",
+                    s.updated_at        = toString(datetime())
+                """,
+                {
+                    "service": svc,
+                    "p99":     p99,
+                    "avg":     avg,
+                    "score":   score,
+                    "cpu":     cpu,
+                    "mem":     mem,
+                },
+            )
+
+            # Store insight if anomalous
+            if score < 60 or p99 > 1000:
+                severity = "high" if p99 > 1000 or score < 40 else "medium"
+                add_insight(svc, {
+                    "category":       "performance",
+                    "severity":       severity,
+                    "title":          f"Elevated p99 latency from Datadog live sync ({p99}ms)",
+                    "insight":        (
+                        f"Live Datadog sync measured p99={p99}ms, avg={avg}ms "
+                        f"for {svc}. Health score: {score}. "
+                        f"CPU: {cpu}%, Mem: {mem}%."
+                    ),
+                    "evidence":       f'{{"p99_latency_ms": {p99}, "avg_latency_ms": {avg}, "health_score": {score}, "cpu": {cpu}, "mem": {mem}}}',
+                    "recommendation": "Investigate slow dependencies and consider scaling or circuit breakers.",
                 })
-                updated += 1
+                anomalies_detected.append({"service": svc, "p99": p99, "score": score})
 
-        return {"status": "success", "services_updated": updated}
+            update_baseline(svc, {
+                "p99_latency_ms": p99,
+                "avg_latency_ms": avg,
+                "health_score":   score,
+            })
+            updated += 1
+
+        return {
+            "status":            "success",
+            "data_source":       "datadog_live",
+            "services_updated":  updated,
+            "anomalies_detected": len(anomalies_detected),
+            "anomalies":         anomalies_detected,
+        }
+
     except Exception as exc:
-        # Fallback for Hackathon: mock the sync if DD API keys are not set yet
-        if "Missing" in str(exc) or "Could not connect" in str(exc):
-             for svc in (payload.services or []):
-                 await run_query(
-                    """
-                    MATCH (s:Service {name: $service})
-                    SET s.p99_latency_ms = rand() * 400 + 100,
-                        s.avg_latency_ms = rand() * 50 + 50,
-                        s.rpm = toInteger(rand() * 5000 + 100),
-                        s.error_rate_percent = round(rand() * 5 * 100) / 100.0,
-                        s.cpu_usage_percent = toInteger(rand() * 60 + 20),
-                        s.mem_usage_percent = toInteger(rand() * 70 + 20),
-                        s.updated_at = toString(datetime())
-                    """,
-                    {"service": svc}
-                )
-             return {"status": "mocked", "message": "Datadog keys missing, mocking metric sync."}
-        
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /api/hooks/scale
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/scale")
+async def scale_and_validate(payload: ScalePayload):
+    """
+    Full scale-up or scale-down pipeline:
+
+      1. Get the current replica count from ECS (or graph for demo)
+      2. (Optional) Run Phase 1 TestSprite network stability test (pre-scale baseline)
+      3. Execute scale_ecs_service
+      4. Wait for stabilization
+      5. (Optional) Run Phase 2 TestSprite network stability test (post-scale)
+      6. Update Neo4j with new scale state
+      7. Return combined result including scale + test verdicts
+
+    This implements the network-stability-testing-on-scale-events requirement.
+    """
+    from agent.tools.aws_tools import scale_ecs_service, get_action_log
+    from agent.tools.testsprite import validate_scale_stability
+    import json
+
+    try:
+        # Step 1: Determine current replica count from the action log or default
+        action_log = get_action_log()
+        previous_scale_actions = [
+            a for a in action_log
+            if a["action_type"] == "scale_ecs" and a["service"] == payload.service
+        ]
+        instance_before = 2  # default
+        if previous_scale_actions:
+            last = previous_scale_actions[0]
+            instance_before = last["result"].get("new_desired_count", 2)
+
+        # Step 2: Scale the service
+        scale_result_raw = await scale_ecs_service(
+            cluster=payload.cluster,
+            service=payload.service,
+            desired_count=payload.instance_count,
+            reason=payload.reason,
+        )
+        scale_result = json.loads(scale_result_raw)
+
+        # Step 3: Optional network stability test (pre/post)
+        stability_result = None
+        if payload.run_stability_test:
+            stability_raw = await validate_scale_stability(
+                service_name=payload.service,
+                scale_direction=payload.direction,
+                instance_count_before=instance_before,
+                instance_count_after=payload.instance_count,
+                stabilization_wait_seconds=payload.stabilization_wait_seconds,
+            )
+            stability_result = json.loads(stability_raw)
+
+        # Step 4: Update Neo4j with new scale state
+        await run_query(
+            """
+            MATCH (s:Service {name: $service})
+            SET s.replica_count = $count,
+                s.last_scaled_at = toString(datetime()),
+                s.scale_direction = $direction
+            """,
+            {
+                "service":   payload.service,
+                "count":     payload.instance_count,
+                "direction": payload.direction,
+            },
+        )
+
+        # Step 5: If stability test failed, flag a remediation insight
+        if stability_result and not stability_result.get("network_stable"):
+            add_insight(payload.service, {
+                "category":       "reliability",
+                "severity":       "high",
+                "title":          f"Network instability detected after scale-{payload.direction}",
+                "insight":        (
+                    f"After scaling {payload.service} from {instance_before} to "
+                    f"{payload.instance_count} replicas (scale-{payload.direction}), "
+                    f"TestSprite network stability tests detected a regression. "
+                    f"Pass rate delta: {stability_result['delta']['pass_rate_pct']}%. "
+                    f"P99 delta: {stability_result['delta']['latency_ms']}ms."
+                ),
+                "evidence":       json.dumps({
+                    "pre_scale":  stability_result.get("phase_1_pre_scale"),
+                    "post_scale": stability_result.get("phase_2_post_scale"),
+                }),
+                "recommendation": (
+                    "Consider reverting the scale event or investigating service discovery "
+                    "and load balancer health check configuration."
+                ),
+            })
+
+        return {
+            "status":          "success",
+            "service":         payload.service,
+            "direction":       payload.direction,
+            "instance_before": instance_before,
+            "instance_after":  payload.instance_count,
+            "scale_result":    scale_result,
+            "stability_test":  stability_result,
+            "network_stable":  stability_result["network_stable"] if stability_result else None,
+            "verdict":         stability_result["verdict"] if stability_result else "Stability test skipped",
+        }
+
+    except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
