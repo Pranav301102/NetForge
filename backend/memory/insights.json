@@ -1,0 +1,371 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-02-20T18:51:20.005254+00:00",
+  "services": {
+    "checkout-service": {
+      "baseline_metrics": {
+        "p99_latency_ms": 1991,
+        "avg_latency_ms": 438,
+        "health_score": 5,
+        "cpu_usage_percent": 50,
+        "rpm": 170,
+        "error_rate_percent": 7.44,
+        "measured_at": "2026-02-20T18:10:49.138919+00:00"
+      },
+      "patterns": [
+        {
+          "type": "latency_spike",
+          "description": "P99 latency spikes to 3x baseline every 4 hours, lasting 2-3 minutes. Correlates with garbage collection pauses \u2014 heap usage reaches 92% before GC triggers.",
+          "confidence": 0.892360586862409,
+          "recommendation": "Tune JVM GC settings: switch from G1GC to ZGC for sub-millisecond pause times. Increase heap from 2GB to 3GB.",
+          "id": "pat-2c60bdf7",
+          "first_detected": "2026-02-20T18:10:49.189397+00:00",
+          "last_confirmed": "2026-02-20T18:10:49.189406+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "periodic_overload",
+          "description": "CPU usage spikes above 85% every weekday between 9:00-10:30am UTC, correlating with business-hours traffic surge. Pattern detected across 28 observations over 3 weeks.",
+          "confidence": 0.8972672194589615,
+          "recommendation": "Configure pre-emptive auto-scaling at 8:45am UTC. Add 2 warm instances before the traffic ramp.",
+          "id": "pat-143da2f4",
+          "first_detected": "2026-02-20T18:10:49.198973+00:00",
+          "last_confirmed": "2026-02-20T18:10:49.198992+00:00",
+          "occurrences": 1
+        }
+      ],
+      "insights": [
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Cascade risk from payment-service dependency",
+          "insight": "Checkout-service is experiencing cascade latency from payment-service (p99 1800ms). While its own health is 96, the checkout flow is severely impacted by the payment dependency.",
+          "evidence": "{\"health_score\": 96, \"avg_latency_ms\": 18, \"p99_latency_ms\": 60, \"depends_on\": \"payment-service\", \"parent_health\": 42}",
+          "recommendation": "Add circuit breaker with fallback flow: if payment-service p99 exceeds 500ms for 3 consecutive minutes, switch to async payment processing with status webhooks.",
+          "id": "ins-7f97da87",
+          "timestamp": "2026-02-20T16:26:53.575093+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Cascade latency from payment-service resolved via rollback",
+          "insight": "Checkout-service experienced cascade latency from payment-service (p99 1800ms) after payment-service v2.3.1 deployment. Root cause was payment-service degradation. Successfully rolled back payment-service to v2.3.0. Checkout-service recovered to baseline p99 of 57ms.",
+          "evidence": "{\"checkout_service_health_score\": 96, \"checkout_p99_ms\": 60, \"payment_service_health_score\": 42, \"payment_p99_ms\": 1800, \"rollback_deployment_id\": \"d-2CA204C5\", \"recovery_p99_ms\": 57, \"recovery_pass_rate\": 94}",
+          "recommendation": "Before deploying payment-service changes: (1) Add circuit breaker with 500ms timeout to protect upstream services, (2) Implement async payment processing with status webhooks as fallback, (3) Add regression tests for payment latency",
+          "id": "ins-cb3f8852",
+          "timestamp": "2026-02-20T18:10:38.296652+00:00",
+          "status": "open"
+        },
+        {
+          "category": "cost",
+          "severity": "low",
+          "title": "Idle Redis cache \u2014 low hit rate",
+          "insight": "Cache hit rate is only 12% \u2014 most requests bypass cache due to short TTL (30s) on frequently accessed but rarely changing data. Cache infrastructure cost is $89/month with minimal benefit.",
+          "evidence": "{\"p99_latency_ms\": 1991, \"avg_latency_ms\": 438, \"cpu_usage_percent\": 50, \"rpm\": 170, \"error_rate_percent\": 7.44, \"health_score\": 5}",
+          "recommendation": "Increase TTL to 300s for catalog data and 60s for user profiles. Expected cache hit rate improvement to 65%, reducing database load by ~40%.",
+          "id": "ins-45fc8e60",
+          "timestamp": "2026-02-20T18:10:49.150315+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "medium",
+          "title": "Request batching opportunity",
+          "insight": "Service makes 170 individual downstream calls per minute to the same dependency. Analysis shows 60% of these could be batched into bulk requests, reducing network overhead and downstream load.",
+          "evidence": "{\"p99_latency_ms\": 1991, \"avg_latency_ms\": 438, \"cpu_usage_percent\": 50, \"rpm\": 170, \"error_rate_percent\": 7.44, \"health_score\": 5}",
+          "recommendation": "Implement request batching with 50ms collection window. Expected to reduce downstream call volume by 60% and improve p99 latency by ~120ms.",
+          "id": "ins-0205cc52",
+          "timestamp": "2026-02-20T18:10:49.159494+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Missing health check endpoint",
+          "insight": "Service lacks a deep health check that validates downstream connectivity. Current /health endpoint only returns 200 OK without checking database or cache reachability. This means the load balancer continues routing traffic to unhealthy instances.",
+          "evidence": "{\"p99_latency_ms\": 1991, \"avg_latency_ms\": 438, \"cpu_usage_percent\": 50, \"rpm\": 170, \"error_rate_percent\": 7.44, \"health_score\": 5}",
+          "recommendation": "Implement deep health check that validates DB connection, cache connectivity, and critical downstream service reachability.",
+          "id": "ins-17bd7a5e",
+          "timestamp": "2026-02-20T18:10:49.169303+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "high",
+          "title": "Database query bottleneck detected",
+          "insight": "The slowest downstream dependency is contributing 570ms to total request latency. Unindexed queries on the users table are causing full table scans during peak traffic. Query plan analysis shows sequential scan on 2.3M rows.",
+          "evidence": "{\"p99_latency_ms\": 1991, \"avg_latency_ms\": 438, \"cpu_usage_percent\": 50, \"rpm\": 170, \"error_rate_percent\": 7.44, \"health_score\": 5}",
+          "recommendation": "Add composite index on (user_id, created_at) to the users table. Expected to reduce query time from {dep_latency}ms to ~15ms.",
+          "id": "ins-f8df8fe6",
+          "timestamp": "2026-02-20T18:10:49.179817+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "user-service": {
+      "baseline_metrics": {},
+      "patterns": [],
+      "insights": [
+        {
+          "category": "optimization",
+          "severity": "low",
+          "title": "Read replica optimization for user-service",
+          "insight": "User-service is healthy with p99 of 30ms. Consider read replica for user profile reads to reduce load on primary database.",
+          "evidence": "{\"health_score\": 98, \"avg_latency_ms\": 9, \"p99_latency_ms\": 30, \"criticality\": \"high\", \"rpm\": 800}",
+          "recommendation": "Implement read/write splitting: route GET /users/:id to read replica, writes to primary. Add caching for frequently accessed user profiles.",
+          "id": "ins-93ed9e20",
+          "timestamp": "2026-02-20T16:27:06.478744+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "inventory-service": {
+      "baseline_metrics": {},
+      "patterns": [],
+      "insights": [
+        {
+          "category": "optimization",
+          "severity": "low",
+          "title": "Event-driven architecture opportunity",
+          "insight": "Inventory-service is healthy with p99 of 38ms. Currently serving 400 RPM with good latency. Consider event-driven updates for real-time inventory sync.",
+          "evidence": "{\"health_score\": 98, \"avg_latency_ms\": 11, \"p99_latency_ms\": 38, \"criticality\": \"high\", \"rpm\": 400}",
+          "recommendation": "Implement event sourcing for inventory changes to enable audit trail and eventual consistency across services. Add optimistic locking for concurrent inventory reservations.",
+          "id": "ins-62e6a272",
+          "timestamp": "2026-02-20T16:27:17.229051+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "payment-service": {
+      "baseline_metrics": {},
+      "patterns": [
+        {
+          "type": "dependency_bottleneck",
+          "description": "External payment-gateway dependency consistently shows high p99 latency (1200ms) causing cascade effects to upstream services (checkout-service, wallet-service with p99 1800ms). No circuit breaker or timeout protection configured.",
+          "confidence": 0.85,
+          "recommendation": "Add circuit breaker with 500ms timeout, implement bulkhead pattern, and consider async payment processing to decouple from external gateway latency.",
+          "id": "pat-fd12f55e",
+          "first_detected": "2026-02-20T16:42:46.159835+00:00",
+          "last_confirmed": "2026-02-20T16:42:46.159839+00:00",
+          "occurrences": 1
+        }
+      ],
+      "insights": [
+        {
+          "category": "optimization",
+          "severity": "low",
+          "title": "Database layer performing optimally",
+          "insight": "Database performance is excellent with p99 latency of only 12ms across 600 RPM. The database layer is properly optimized and not a bottleneck.",
+          "evidence": "{\"database\": \"postgres-orders\", \"avg_latency_ms\": 3, \"p99_latency_ms\": 12, \"rpm\": 600, \"healthy\": true}",
+          "recommendation": "No action required for database layer - performing optimally.",
+          "id": "ins-70ce81f8",
+          "timestamp": "2026-02-20T16:42:40.608674+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "critical",
+          "title": "payment-service critical degradation",
+          "insight": "payment-service is experiencing severe degradation with health score 42 and p99 latency of 1800ms. The root cause appears to be the external payment-gateway dependency with p99 latency of 1200ms. This is affecting upstream callers checkout-service and wallet-service.",
+          "evidence": "{\"avg_latency_ms\": 420, \"health_score\": 42, \"p99_latency_ms\": 1800, \"root_cause\": \"external dependency payment-gateway with p99 1200ms\"}",
+          "recommendation": "1. Contact payment-gateway provider for status update. 2. Consider implementing circuit breaker for external payment-gateway. 3. Scale payment-service if needed after external dependency is resolved.",
+          "id": "ins-eab6f171",
+          "timestamp": "2026-02-20T18:51:20.005228+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "order-service": {
+      "baseline_metrics": {
+        "p99_latency_ms": 2372,
+        "avg_latency_ms": 773,
+        "health_score": 5,
+        "cpu_usage_percent": 15,
+        "rpm": 849,
+        "error_rate_percent": 5.3,
+        "measured_at": "2026-02-20T18:08:59.588627+00:00"
+      },
+      "patterns": [
+        {
+          "type": "latency_spike",
+          "description": "P99 latency spikes to 3x baseline every 4 hours, lasting 2-3 minutes. Correlates with garbage collection pauses \u2014 heap usage reaches 92% before GC triggers.",
+          "confidence": 0.9101833218403074,
+          "recommendation": "Tune JVM GC settings: switch from G1GC to ZGC for sub-millisecond pause times. Increase heap from 2GB to 3GB.",
+          "id": "pat-cd1e2d35",
+          "first_detected": "2026-02-20T16:48:23.127588+00:00",
+          "last_confirmed": "2026-02-20T16:49:43.004693+00:00",
+          "occurrences": 2
+        },
+        {
+          "type": "cascade_risk",
+          "description": "When payment-gateway response time exceeds 2000ms, order-service and checkout-service degrade within 30 seconds. Observed in 14 of the last 20 incidents.",
+          "confidence": 0.99,
+          "recommendation": "Add 1500ms timeout with circuit breaker on payment-gateway calls. Implement retry with exponential backoff (100ms, 200ms, 400ms max).",
+          "id": "pat-8c0b311c",
+          "first_detected": "2026-02-20T16:48:23.137947+00:00",
+          "last_confirmed": "2026-02-20T18:08:59.633568+00:00",
+          "occurrences": 2
+        },
+        {
+          "type": "correlated_degradation",
+          "description": "redis-cache latency spikes correlate with catalog-service and auth-service degradation within 10 seconds. Memory fragmentation ratio exceeds 1.5 during peak load.",
+          "confidence": 0.8541774450132886,
+          "recommendation": "Enable Redis active defragmentation. Set maxmemory-policy to allkeys-lru. Schedule periodic MEMORY PURGE during low-traffic windows.",
+          "id": "pat-e4adc151",
+          "first_detected": "2026-02-20T18:08:59.642843+00:00",
+          "last_confirmed": "2026-02-20T18:08:59.642848+00:00",
+          "occurrences": 1
+        }
+      ],
+      "insights": [
+        {
+          "category": "performance",
+          "severity": "low",
+          "title": "order-service healthy - monitoring shipping-service latency",
+          "insight": "order-service is healthy with health score 97, p99 latency 45ms, and avg latency 14ms. No remediation needed. However, downstream dependency shipping-service has elevated p99 latency (75ms) which exceeds the service's own p99 - worth monitoring.",
+          "evidence": "{\"health_score\": 97, \"p99_latency_ms\": 45, \"avg_latency_ms\": 14, \"slowest_dependency\": \"shipping-service\", \"slowest_dependency_p99_ms\": 75, \"upstream_callers\": [\"api-gateway\"]}",
+          "recommendation": "Continue monitoring. shipping-service p99 latency (75ms) should be investigated separately as it exceeds order-service's own latency.",
+          "id": "ins-6e1e035c",
+          "timestamp": "2026-02-20T16:48:12.429864+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "medium",
+          "title": "Connection pool saturation approaching",
+          "insight": "Database connection pool utilization is at 82% during peak hours (9-11am UTC). At current growth rate, pool exhaustion is projected within 2 weeks. This will cause request queuing and cascading timeouts.",
+          "evidence": "{\"p99_latency_ms\": 2225, \"avg_latency_ms\": 694, \"cpu_usage_percent\": 78, \"rpm\": 5759, \"error_rate_percent\": 3.62, \"health_score\": 5}",
+          "recommendation": "Increase connection pool max_size from 20 to 40 and enable connection pool monitoring via SSM parameter update.",
+          "id": "ins-cee57dc3",
+          "timestamp": "2026-02-20T16:48:23.114475+00:00",
+          "status": "open"
+        },
+        {
+          "category": "cost",
+          "severity": "low",
+          "title": "Idle Redis cache \u2014 low hit rate",
+          "insight": "Cache hit rate is only 12% \u2014 most requests bypass cache due to short TTL (30s) on frequently accessed but rarely changing data. Cache infrastructure cost is $89/month with minimal benefit.",
+          "evidence": "{\"p99_latency_ms\": 2225, \"avg_latency_ms\": 694, \"cpu_usage_percent\": 78, \"rpm\": 5759, \"error_rate_percent\": 3.62, \"health_score\": 5}",
+          "recommendation": "Increase TTL to 300s for catalog data and 60s for user profiles. Expected cache hit rate improvement to 65%, reducing database load by ~40%.",
+          "id": "ins-949dfe53",
+          "timestamp": "2026-02-20T16:48:23.119705+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "order-service recovered - connection pool issue resolved",
+          "insight": "order-service has recovered. Connection pool saturation was the root cause - increased pool size from 20 (or 30000) to 40. p99 latency dropped from elevated levels to 42.75ms, within baseline of 45ms. Service is now healthy with 94% pass rate.",
+          "evidence": "{\"p99_latency_ms\": 42.75, \"pass_rate\": 94, \"baseline_p99_ms\": 45, \"actions_taken\": [\"Updated SSM param /forge/order-service/db_pool_max_size from 30000 to 40\"], \"recovery_time\": \"immediate\"}",
+          "recommendation": "Monitor connection pool utilization over next 24 hours. If it approaches 80% again, consider further scaling or implementing connection pooling at the proxy level.",
+          "id": "ins-ea6d934e",
+          "timestamp": "2026-02-20T16:49:37.918894+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "high",
+          "title": "P99 latency exceeds SLO threshold",
+          "insight": "P99 latency has been above the 500ms SLO target for the last 3 consecutive measurement windows. Current p99 is 2372ms against a baseline of 200ms \u2014 a 1086% increase. This correlates with a recent deployment and increased traffic from upstream services.",
+          "evidence": "{\"p99_latency_ms\": 2372, \"avg_latency_ms\": 773, \"cpu_usage_percent\": 15, \"rpm\": 849, \"error_rate_percent\": 5.3, \"health_score\": 5}",
+          "recommendation": "Investigate the most recent deployment for performance regressions. Consider adding a database query cache or increasing connection pool size from 10 to 25.",
+          "id": "ins-43bc9fb3",
+          "timestamp": "2026-02-20T18:08:59.600274+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "medium",
+          "title": "Request batching opportunity",
+          "insight": "Service makes 849 individual downstream calls per minute to the same dependency. Analysis shows 60% of these could be batched into bulk requests, reducing network overhead and downstream load.",
+          "evidence": "{\"p99_latency_ms\": 2372, \"avg_latency_ms\": 773, \"cpu_usage_percent\": 15, \"rpm\": 849, \"error_rate_percent\": 5.3, \"health_score\": 5}",
+          "recommendation": "Implement request batching with 50ms collection window. Expected to reduce downstream call volume by 60% and improve p99 latency by ~120ms.",
+          "id": "ins-b57a679f",
+          "timestamp": "2026-02-20T18:08:59.611181+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Cascade failure risk \u2014 deep dependency chain",
+          "insight": "Service sits on a dependency chain 4 hops deep. A failure at the deepest dependency would cascade through 2 services. No bulkhead isolation exists between the critical and non-critical paths.",
+          "evidence": "{\"p99_latency_ms\": 2372, \"avg_latency_ms\": 773, \"cpu_usage_percent\": 15, \"rpm\": 849, \"error_rate_percent\": 5.3, \"health_score\": 5}",
+          "recommendation": "Implement bulkhead pattern to isolate critical payment path from non-critical analytics path. Add async fallback for non-essential downstream calls.",
+          "id": "ins-8806eec8",
+          "timestamp": "2026-02-20T18:08:59.622301+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "platform-wide": {
+      "baseline_metrics": {},
+      "patterns": [],
+      "insights": [
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Platform service health summary",
+          "insight": "Platform-wide service health summary: 2 of 3 tracked services are in critical state with elevated p99 latency. checkout-service and order-service both show health score of 5 with p99 latency 10-12x above baseline. Common root cause is payment-service dependency issues and database query bottlenecks.",
+          "evidence": "{\"services_tracked\": 3, \"critical_services\": 2, \"high_severity_issues\": 5, \"patterns_detected\": 6}",
+          "recommendation": "Priority actions: (1) Add composite index on users table for checkout-service, (2) Implement circuit breaker for payment-service calls, (3) Tune JVM GC settings for order-service",
+          "id": "ins-6cc10684",
+          "timestamp": "2026-02-20T18:51:05.699739+00:00",
+          "status": "open"
+        }
+      ]
+    }
+  },
+  "global_patterns": [],
+  "analysis_history": [
+    {
+      "trigger": "generate_insights",
+      "services_analyzed": [
+        "payment-service"
+      ],
+      "findings_summary": "Generated insights for 1 services",
+      "actions_taken": [
+        "generate_insights"
+      ],
+      "insights_generated": [],
+      "session_id": "sess-ea0685df",
+      "timestamp": "2026-02-20T16:42:59.257272+00:00"
+    },
+    {
+      "trigger": "manual",
+      "services_analyzed": [
+        "order-service"
+      ],
+      "findings_summary": "order-service is healthy with a health score of 97 and p99 latency of 45ms. All metrics are within normal range. The only note is that downstream dependency shipping-service has elevated latency (p99 75ms), which should be monitored separately but does not currently impact order-service performance.",
+      "actions_taken": [],
+      "insights_generated": [],
+      "session_id": "sess-32fe8f4b",
+      "timestamp": "2026-02-20T16:48:23.081651+00:00"
+    },
+    {
+      "trigger": "manual",
+      "services_analyzed": [
+        "order-service"
+      ],
+      "findings_summary": "order-service is operating normally. P99 latency is 451ms within the 500ms SLO. No anomalies detected. Historical patterns show stable performance over the last 24 hours.",
+      "actions_taken": [],
+      "insights_generated": [],
+      "session_id": "sess-9cb4093b",
+      "timestamp": "2026-02-20T18:08:59.556902+00:00"
+    },
+    {
+      "trigger": "manual",
+      "services_analyzed": [
+        "checkout-service"
+      ],
+      "findings_summary": "Checkout-service was experiencing cascade latency from payment-service, which degraded to p99 1800ms after a v2.3.1 deployment. I identified the root cause, rolled back payment-service to v2.3.0, and validated recovery\u2014checkout-service p99 returned to baseline 57ms with 94% pass rate. The existing circuit breaker recommendation should be implemented to prevent future cascade events.",
+      "actions_taken": [
+        "rollback",
+        "validation"
+      ],
+      "insights_generated": [],
+      "session_id": "sess-7df06ef5",
+      "timestamp": "2026-02-20T18:10:49.115770+00:00"
+    }
+  ]
+}
