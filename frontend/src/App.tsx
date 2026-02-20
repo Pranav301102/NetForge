@@ -217,6 +217,22 @@ export default function DeployOpsCenter() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
+  // Burst/rest cycle — agents run for 30s, rest for 60s, then repeat
+  const isPollingActiveRef = useRef(true);
+  useEffect(() => {
+    const ACTIVE_MS = 30_000;
+    const REST_MS = 60_000;
+    let timeout: ReturnType<typeof setTimeout>;
+
+    const scheduleNext = (goActive: boolean) => {
+      isPollingActiveRef.current = goActive;
+      timeout = setTimeout(() => scheduleNext(!goActive), goActive ? ACTIVE_MS : REST_MS);
+    };
+
+    scheduleNext(true); // start active immediately
+    return () => clearTimeout(timeout);
+  }, []);
+
   // ── Initial graph load ────────────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
@@ -284,7 +300,7 @@ export default function DeployOpsCenter() {
   useEffect(() => {
     if (apiStatus !== "connected") return;
     const poll = async () => {
-      if (!isPageVisibleRef.current) return;
+      if (!isPageVisibleRef.current || !isPollingActiveRef.current) return;
       try {
         const res = await fetch("/api/agent/health");
         if (!res.ok) { console.warn("[health] poll failed:", res.status); return; }
@@ -313,7 +329,7 @@ export default function DeployOpsCenter() {
 
   // ── Insights data fetching ───────────────────────────────────────────────
   const fetchInsightsData = useCallback(async () => {
-    if (apiStatus !== "connected" || insightsFetchingRef.current || !isPageVisibleRef.current) return;
+    if (apiStatus !== "connected" || insightsFetchingRef.current || !isPageVisibleRef.current || !isPollingActiveRef.current) return;
     insightsFetchingRef.current = true;
     setInsightsLoading(true);
     try {
@@ -351,7 +367,7 @@ export default function DeployOpsCenter() {
   useEffect(() => {
     if (rightTab !== "agent" || apiStatus !== "connected") return;
     const fetchActivity = async () => {
-      if (!isPageVisibleRef.current) return;
+      if (!isPageVisibleRef.current || !isPollingActiveRef.current) return;
       try {
         const res = await fetch(`/api/agent/activity?since_id=${activitySinceIdRef.current}&limit=30`);
         if (!res.ok) { console.warn("[activity] fetch failed:", res.status); return; }
@@ -420,7 +436,7 @@ export default function DeployOpsCenter() {
 
   // ── Cluster data fetching ────────────────────────────────────────────────
   const fetchClusterStatus = useCallback(async () => {
-    if (apiStatus !== "connected" || clusterFetchingRef.current || !isPageVisibleRef.current) return;
+    if (apiStatus !== "connected" || clusterFetchingRef.current || !isPageVisibleRef.current || !isPollingActiveRef.current) return;
     clusterFetchingRef.current = true;
     try {
       const [statusRes, eventsRes] = await Promise.allSettled([
@@ -490,7 +506,7 @@ export default function DeployOpsCenter() {
   };
 
   const fetchScaleReport = async () => {
-    if (!isPageVisibleRef.current) return;
+    if (!isPageVisibleRef.current || !isPollingActiveRef.current) return;
     try {
       const res = await fetch("/api/cluster/report");
       if (res.ok) { setScaleReport(await res.json()); }
@@ -501,7 +517,7 @@ export default function DeployOpsCenter() {
   };
 
   const fetchValidations = async () => {
-    if (!isPageVisibleRef.current) return;
+    if (!isPageVisibleRef.current || !isPollingActiveRef.current) return;
     try {
       const res = await fetch("/api/cluster/validations");
       if (res.ok) {
