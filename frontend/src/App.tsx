@@ -1138,7 +1138,7 @@ export default function DeployOpsCenter() {
                       </div>
 
                       {/* Live Agent Activity Feed */}
-                      <div style={{ padding: 14, flex: 1, overflowY: "auto" }}>
+                      <div style={{ padding: 14, maxHeight: 260, overflowY: "auto" }}>
                         <div style={{ fontSize: 9, color: "#7b61ff", letterSpacing: 2, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
                           <Lightbulb size={10} /> LIVE AGENT ACTIVITY
                           {agentActivity.length > 0 && (

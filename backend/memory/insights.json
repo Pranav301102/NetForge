@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-02-20T22:48:29.178050+00:00",
+  "last_updated": "2026-02-20T22:54:03.047585+00:00",
   "services": {
     "checkout-service": {
       "baseline_metrics": {
@@ -31,6 +31,26 @@
           "id": "pat-143da2f4",
           "first_detected": "2026-02-20T18:10:49.198973+00:00",
           "last_confirmed": "2026-02-20T18:10:49.198992+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "periodic_overload",
+          "description": "Daily CPU usage spikes (>85%) during 9:00-10:30am UTC business hours",
+          "confidence": 0.89,
+          "recommendation": "Implement predictive auto-scaling 15 minutes before known peak period",
+          "id": "pat-74544240",
+          "first_detected": "2026-02-20T22:53:33.301193+00:00",
+          "last_confirmed": "2026-02-20T22:53:33.301208+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "latency_spike",
+          "description": "Regular latency spikes every 4 hours due to JVM garbage collection pauses",
+          "confidence": 0.89,
+          "recommendation": "Switch to ZGC and increase heap size to reduce GC pause impact",
+          "id": "pat-88858854",
+          "first_detected": "2026-02-20T22:53:38.157481+00:00",
+          "last_confirmed": "2026-02-20T22:53:38.157503+00:00",
           "occurrences": 1
         }
       ],
@@ -100,6 +120,17 @@
           "id": "ins-f8df8fe6",
           "timestamp": "2026-02-20T18:10:49.179817+00:00",
           "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "high",
+          "title": "JVM GC pauses causing regular latency spikes",
+          "insight": "Regular JVM garbage collection pauses causing 2-3 minute latency spikes every 4 hours. Current heap configuration (2GB) with G1GC collector results in stop-the-world pauses when heap usage reaches 92%.",
+          "evidence": "{\"current_p99_ms\": 1991, \"baseline_p99_ms\": 438, \"gc_pause_duration_ms\": 180, \"heap_usage_percent\": 92}",
+          "recommendation": "1. Switch from G1GC to ZGC for sub-millisecond pause times\n2. Increase heap from 2GB to 3GB\n3. Add JVM args: -XX:+UseZGC -Xms3g -Xmx3g",
+          "id": "ins-5bd3c09a",
+          "timestamp": "2026-02-20T22:53:45.778916+00:00",
+          "status": "open"
         }
       ]
     },
@@ -116,6 +147,17 @@
           "recommendation": "Implement read/write splitting: route GET /users/:id to read replica, writes to primary. Add caching for frequently accessed user profiles.",
           "id": "ins-93ed9e20",
           "timestamp": "2026-02-20T16:27:06.478744+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "medium",
+          "title": "Slow synchronous KYC verification",
+          "insight": "KYC-service is the slowest dependency with p99 latency of 135ms. This external service call is synchronous and blocking, impacting overall response times.",
+          "evidence": "{\"dependency\": \"kyc-service\", \"avg_latency_ms\": 42, \"p99_latency_ms\": 135, \"rpm\": 100}",
+          "recommendation": "Implement async KYC verification:\n1. Return immediate response with \"verification_pending\" status\n2. Process KYC check asynchronously via message queue\n3. Update user status via webhook when verification completes\nExpected improvement: Remove 135ms blocking call from critical path",
+          "id": "ins-cefe15de",
+          "timestamp": "2026-02-20T22:54:02.734661+00:00",
           "status": "open"
         }
       ]
@@ -495,6 +537,26 @@
           "first_detected": "2026-02-20T22:21:19.959200+00:00",
           "last_confirmed": "2026-02-20T22:21:19.959216+00:00",
           "occurrences": 1
+        },
+        {
+          "type": "periodic_overload",
+          "description": "Recurring pattern of pod restarts and OOMKill events suggests memory pressure during peak workload periods",
+          "confidence": 0.85,
+          "recommendation": "Implement predictive scaling based on historical load patterns and set memory limits with 20% headroom above observed peak usage",
+          "id": "pat-71cc5fc9",
+          "first_detected": "2026-02-20T22:49:37.013411+00:00",
+          "last_confirmed": "2026-02-20T22:49:37.013414+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "cascade_risk",
+          "description": "Recurring pattern of pod OOMKills followed by CrashLoopBackOff states, coupled with Sidekiq job processing errors, suggesting systematic resource allocation issues in the cluster",
+          "confidence": 0.85,
+          "recommendation": "1. Implement dynamic resource limits based on usage patterns\n2. Set up predictive scaling for job processing pods\n3. Add memory headroom monitoring and alerts\n4. Review and optimize Sidekiq job memory consumption",
+          "id": "pat-a32ee939",
+          "first_detected": "2026-02-20T22:54:02.530590+00:00",
+          "last_confirmed": "2026-02-20T22:54:02.530596+00:00",
+          "occurrences": 1
         }
       ],
       "insights": [
@@ -783,6 +845,94 @@
           "id": "ins-bc9dffa3",
           "timestamp": "2026-02-20T22:48:08.169113+00:00",
           "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Platform Health Issues Detected",
+          "insight": "Platform-wide analysis reveals multiple critical issues: 1) Kubernetes pods experiencing CrashLoopBackOff and OOMKilled states, 2) High Sidekiq job error rates, 3) Redis monitoring failure, and 4) System load issues on multiple hosts. This combination of issues suggests systemic resource constraints and potential cascading failures.",
+          "evidence": "{\"monitor_summary\": {\"total\": 40, \"alerting\": 6, \"no_data\": 1}, \"critical_alerts\": [\"Pod CrashloopBackOff\", \"Pod OOMKilled\", \"Kubernetes Pods Restarting\", \"High Sidekiq Error Rate\"], \"affected_systems\": [\"Redis\", \"Sidekiq\", \"Kubernetes Pods\"]}",
+          "recommendation": "1) Immediately investigate and resolve OOMKilled pods by adjusting memory limits, 2) Debug CrashLoopBackOff pods through logs analysis, 3) Investigate Sidekiq job processing errors, 4) Restore Redis monitoring, 5) Review system resource allocation across all nodes.",
+          "id": "ins-897ed0f7",
+          "timestamp": "2026-02-20T22:48:42.747577+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Platform Issues Detected",
+          "insight": "Platform is experiencing multiple critical issues including pod crashes (CrashLoopBackOff), memory pressure (OOMKilled), and application errors (Sidekiq). Redis monitoring is offline and system load is elevated.",
+          "evidence": "{\"monitor_summary\": {\"total\": 40, \"alerting\": 6, \"ok\": 33, \"no_data\": 1}, \"critical_alerts\": [\"Pod CrashLoopBackOff\", \"Pod OOMKilled\", \"Pods Restarting\", \"Sidekiq High Error Rate\"]}",
+          "recommendation": "1. Immediately investigate and resolve OOMKilled pods by adjusting memory limits\n2. Debug CrashLoopBackOff pods through logs analysis\n3. Review Sidekiq job processing errors\n4. Restore Redis monitoring\n5. Analyze system load across nodes for potential rebalancing",
+          "id": "ins-211ee26d",
+          "timestamp": "2026-02-20T22:48:48.569824+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Platform Issues Detected",
+          "insight": "Platform is experiencing multiple critical issues including pod OOMKills, CrashLoopBackOffs, and high error rates in background job processing. Redis monitoring is unavailable and system load is elevated across multiple hosts.",
+          "evidence": "{\"monitor_summary\": {\"total\": 40, \"alerting\": 6, \"ok\": 33, \"no_data\": 1}, \"critical_issues\": [\"OOMKills\", \"CrashLoopBackOff\", \"High Sidekiq Error Rate\", \"System Load\"], \"affected_hosts\": 30}",
+          "recommendation": "1. Immediately investigate and resolve OOMKilled pods by adjusting memory limits\n2. Debug CrashLoopBackOff pods through logs and events\n3. Analyze Sidekiq job errors and adjust resource allocation\n4. Restore Redis monitoring\n5. Implement predictive memory trending alerts",
+          "id": "ins-557a81ef",
+          "timestamp": "2026-02-20T22:49:11.138021+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Platform Health Issues Detected",
+          "insight": "Platform-wide health check reveals multiple critical issues: 1) Kubernetes pods experiencing CrashLoopBackOff and OOMKilled states, 2) High system load across hosts, 3) Elevated error rates in Sidekiq job processing, 4) Missing Redis monitoring data. The issues span infrastructure, application, and monitoring layers.",
+          "evidence": "{\"total_monitors\": 40, \"alerting_monitors\": 6, \"no_data_monitors\": 1, \"critical_alerts\": [\"Pod CrashloopBackOff\", \"Pod OOMKilled\", \"High System Load\", \"Sidekiq Error Rate\"], \"total_hosts\": 30}",
+          "recommendation": "1) Immediately investigate and resolve OOMKilled pods by reviewing memory limits and actual usage patterns. 2) Debug CrashLoopBackOff pods through log analysis and potential configuration adjustments. 3) Analyze Sidekiq job processing for bottlenecks or resource constraints. 4) Restore Redis monitoring to ensure visibility into cache layer health.",
+          "id": "ins-082eb952",
+          "timestamp": "2026-02-20T22:49:16.697278+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Pod Stability Issues Detected",
+          "insight": "Multiple pods are experiencing stability issues including CrashLoopBackOff and OOMKill events. This indicates potential resource constraints or application issues.",
+          "evidence": "{\"pod_restarts\": \">5 in 5min\", \"oomkill_events\": \"present\", \"system_load\": \"high\"}",
+          "recommendation": "1. Investigate pods in CrashLoopBackOff state\n2. Review memory limits for OOMKilled pods\n3. Analyze Sidekiq job patterns for potential memory leaks\n4. Consider increasing resource limits for affected services",
+          "id": "ins-52d3e24c",
+          "timestamp": "2026-02-20T22:49:27.312415+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "medium",
+          "title": "CPU Throttling and High System Load",
+          "insight": "System load is elevated and CPU throttling is occurring, indicating potential performance bottlenecks.",
+          "evidence": "{\"cpu_throttling\": \"2793049.4417 periods\", \"system_load\": \"high\"}",
+          "recommendation": "1. Review CPU limits and requests\n2. Consider horizontal scaling for CPU-intensive services\n3. Analyze system load patterns to identify peak usage periods\n4. Implement CPU utilization alerts at 80% threshold",
+          "id": "ins-6be26dd7",
+          "timestamp": "2026-02-20T22:49:32.446121+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Health Issues Detected",
+          "insight": "Platform-wide analysis reveals multiple critical issues: 1) Pods in CrashLoopBackOff and OOMKilled states indicating stability issues, 2) High Sidekiq job error rates affecting background processing, 3) System load alerts on multiple hosts, 4) Watchdog detected service anomalies. Container metrics show some CPU throttling though overall resource usage is moderate.",
+          "evidence": "{\"monitors_alert\": 6, \"monitors_ok\": 33, \"monitors_no_data\": 1, \"container_cpu_usage_avg\": 55753244.6832, \"container_mem_usage_avg\": 300176334.9858, \"critical_alerts\": [\"Pod CrashloopBackOff\", \"Pod OOMKilled\", \"Pods Restarting\", \"High Sidekiq Error Rate\"]}",
+          "recommendation": "1) Immediately investigate and resolve pod stability issues - review logs and recent changes, 2) Analyze Sidekiq job patterns and error rates, 3) Review memory limits and resource requests for pods experiencing OOMKills, 4) Investigate system load spike root cause, 5) Set up additional monitoring for CPU throttling and memory pressure.",
+          "id": "ins-9d7d6163",
+          "timestamp": "2026-02-20T22:49:45.909350+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Pod Failures and Resource Pressure",
+          "insight": "Multiple pods are experiencing CrashLoopBackOff and OOMKilled states, indicating serious resource pressure and stability issues. Sidekiq job processing is showing elevated error rates, and Watchdog has detected service anomalies. System load is high across hosts.",
+          "evidence": "{\"monitor_alerts\": 5, \"oom_kills\": true, \"crashloopbackoff\": true, \"sidekiq_errors\": true, \"memory_usage_mb\": 300, \"memory_limit_mb\": 1150}",
+          "recommendation": "1. Immediately investigate and increase memory limits for OOMKilled pods\n2. Debug CrashLoopBackOff pods through logs analysis\n3. Review Sidekiq job processing and queue health\n4. Consider cluster-wide resource allocation review\n5. Implement memory usage monitoring and alerting thresholds",
+          "id": "ins-9ee585bd",
+          "timestamp": "2026-02-20T22:53:57.511518+00:00",
+          "status": "open"
         }
       ]
     },
@@ -816,7 +966,18 @@
     },
     "kubernetes": {
       "baseline_metrics": {},
-      "patterns": [],
+      "patterns": [
+        {
+          "type": "cascade_risk",
+          "description": "Recurring pattern of OOMKilled pods followed by CrashLoopBackOff states, indicating potential memory leaks or insufficient resource limits",
+          "confidence": 0.85,
+          "recommendation": "Implement memory monitoring, adjust resource limits, and investigate memory usage patterns in affected services",
+          "id": "pat-186c9509",
+          "first_detected": "2026-02-20T22:48:42.546846+00:00",
+          "last_confirmed": "2026-02-20T22:48:42.546860+00:00",
+          "occurrences": 1
+        }
+      ],
       "insights": [
         {
           "category": "reliability",
@@ -905,6 +1066,28 @@
           "id": "ins-59334fba",
           "timestamp": "2026-02-20T22:48:29.178043+00:00",
           "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Multiple Critical Container Stability Issues Detected",
+          "insight": "Multiple pods are experiencing stability issues including CrashLoopBackOff and OOMKill events. This indicates both application-level errors and resource constraints. Sidekiq job processing is showing high error rates, and Watchdog has detected service anomalies. System load is elevated on some hosts.",
+          "evidence": "{\"monitors_alert\": 6, \"monitors_ok\": 33, \"monitors_no_data\": 1, \"container_metrics\": {\"cpu_usage_avg\": 57120053.9915, \"mem_usage_avg\": 299148949.0298}, \"critical_alerts\": [\"Pod CrashloopBackOff\", \"Pod OOMKilled\", \"Pods Restarting\", \"High Sidekiq Error Rate\"]}",
+          "recommendation": "1. Immediately investigate pods in CrashLoopBackOff state\n2. Review memory limits and usage patterns for OOMKilled pods\n3. Analyze Sidekiq job errors and implement retry mechanisms\n4. Implement automated scaling policies based on resource usage\n5. Review and adjust memory limits across services\n6. Restore Redis monitoring capability",
+          "id": "ins-ff575a28",
+          "timestamp": "2026-02-20T22:48:49.469181+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Pod Health Issues Detected",
+          "insight": "Multiple pods are experiencing stability issues including CrashLoopBackOff and OOMKilled states, along with abnormal restart patterns. This indicates potential resource constraints or configuration issues.",
+          "evidence": "{\"monitor_alerts\": [\"Pod CrashloopBackOff\", \"Pod OOMKilled\", \"Pods Restarting\"], \"container_metrics\": {\"mem_usage\": \"298018482 bytes\", \"mem_limit\": \"1150483497 bytes\"}}",
+          "recommendation": "1. Review pod resource limits and requests\n2. Analyze pod logs for error patterns\n3. Consider horizontal scaling of affected services\n4. Implement graceful degradation mechanisms",
+          "id": "ins-43dc3083",
+          "timestamp": "2026-02-20T22:49:00.789677+00:00",
+          "status": "open"
         }
       ]
     },
@@ -961,7 +1144,28 @@
     },
     "ad-server": {
       "baseline_metrics": {},
-      "patterns": [],
+      "patterns": [
+        {
+          "type": "cascade_risk",
+          "description": "Ad-server shows consistent pattern of memory exhaustion leading to OOMKills, causing cascading restarts across multiple pods. This creates a thundering herd effect as traffic redistributes.",
+          "confidence": 0.9,
+          "recommendation": "1. Implement circuit breakers\n2. Add gradual ramp-up after pod restarts\n3. Configure pod disruption budgets\n4. Implement memory limits with headroom",
+          "id": "pat-de83a7e0",
+          "first_detected": "2026-02-20T22:48:59.438220+00:00",
+          "last_confirmed": "2026-02-20T22:48:59.438227+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "cascade_risk",
+          "description": "Ad-server pods showing consistent OOMKill pattern across multiple nodes, indicating systemic memory pressure issues rather than isolated incidents",
+          "confidence": 0.9,
+          "recommendation": "Implement memory limits, horizontal pod autoscaling, and consider memory optimization audit of the ad-server application",
+          "id": "pat-aef24fa6",
+          "first_detected": "2026-02-20T22:53:52.772684+00:00",
+          "last_confirmed": "2026-02-20T22:53:52.772690+00:00",
+          "occurrences": 1
+        }
+      ],
       "insights": [
         {
           "category": "reliability",
@@ -972,6 +1176,79 @@
           "recommendation": "1. Immediately increase memory limits by 50%\n2. Implement horizontal pod autoscaling with memory-based scaling rules\n3. Add memory monitoring alerts at 80% threshold\n4. Review memory leak possibilities in application code",
           "id": "ins-a72865f5",
           "timestamp": "2026-02-20T22:48:09.340280+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Ad Server Multiple Pod Failures",
+          "insight": "Multiple ad-server pods are in CrashLoopBackOff state with OOM kills, indicating severe memory pressure and stability issues.",
+          "evidence": "{\"pod_states\": [\"CrashLoopBackOff\"], \"events\": [\"OOMKilling\", \"Unhealthy\"], \"affected_pods\": [\"ad-server-658b8c6c58-2lfpz\", \"ad-server-658b8c6c58-f87q5\", \"ad-server-658b8c6c58-ddb2p\"]}",
+          "recommendation": "1. Immediately increase memory limits for ad-server pods\n2. Investigate memory leak patterns\n3. Consider horizontal scaling instead of vertical scaling\n4. Implement graceful degradation mechanisms",
+          "id": "ins-60e566b9",
+          "timestamp": "2026-02-20T22:53:25.100624+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "inventory-api": {
+      "baseline_metrics": {},
+      "patterns": [],
+      "insights": [
+        {
+          "category": "performance",
+          "severity": "high",
+          "title": "Error spike in inventory-api after deployment",
+          "insight": "New deployment of inventory-api is causing increased error rates on PUT /inventory endpoint. This coincides with recent version changes across the promotions service group, suggesting a potential integration issue.",
+          "evidence": "{\"error_rate_increase\": true, \"deployment_correlation\": true, \"service\": \"inventory-api\", \"endpoint\": \"PUT /inventory\"}",
+          "recommendation": "1. Monitor error rates for 5 more minutes\n2. If errors persist, rollback inventory-api to previous version\n3. Review recent changes in API contract between inventory and promotions services\n4. Add integration tests covering this interaction",
+          "id": "ins-b163b7ad",
+          "timestamp": "2026-02-20T22:48:34.606021+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "sidekiq": {
+      "baseline_metrics": {},
+      "patterns": [],
+      "insights": [
+        {
+          "category": "performance",
+          "severity": "high",
+          "title": "High error rate in background job processing",
+          "insight": "Background job processing through Sidekiq is experiencing high error rates, potentially affecting system reliability and performance.",
+          "evidence": "{\"alerts\": [\"High Error Rate on Sidekiq jobs\", \"Watchdog Anomaly detected\"], \"system_load\": \"high\"}",
+          "recommendation": "1. Review Sidekiq job logs for error patterns\n2. Check Redis connection stability\n3. Implement retry mechanisms with backoff\n4. Consider scaling Sidekiq workers",
+          "id": "ins-ab1c0512",
+          "timestamp": "2026-02-20T22:48:37.448111+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "high",
+          "title": "Sidekiq Job Processing Degradation",
+          "insight": "Background job processing through Sidekiq is experiencing high error rates, combined with elevated system load across hosts. This may indicate queue processing issues or resource constraints.",
+          "evidence": "{\"sidekiq_alert\": \"High Error Rate on sidekiq.job\", \"system_load\": \"high\"}",
+          "recommendation": "1. Review Sidekiq error logs\n2. Check job queue sizes and processing rates\n3. Consider scaling Sidekiq workers\n4. Implement retry strategies with backoff",
+          "id": "ins-fda8f2c7",
+          "timestamp": "2026-02-20T22:49:08.073030+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "celery-worker": {
+      "baseline_metrics": {},
+      "patterns": [],
+      "insights": [
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Celery Workers Experiencing Repeated OOM Kills",
+          "insight": "Multiple Celery worker pods are being terminated due to OOM kills, indicating severe memory pressure. This suggests either memory leaks, insufficient memory limits, or unexpected workload spikes.",
+          "evidence": "{\"oom_kills\": [\"pid: 3033713\", \"pid: 3111124\", \"pid: 2539144\"], \"pod_status\": \"Unhealthy\"}",
+          "recommendation": "1. Immediately increase memory limits for Celery workers\n2. Investigate memory usage patterns for potential memory leaks\n3. Consider implementing graceful degradation mechanisms for high load scenarios",
+          "id": "ins-27b55c8e",
+          "timestamp": "2026-02-20T22:54:03.047571+00:00",
           "status": "open"
         }
       ]
