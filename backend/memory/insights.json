@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-02-20T23:38:50.018783+00:00",
+  "last_updated": "2026-02-20T23:39:11.263363+00:00",
   "services": {
     "checkout-service": {
       "baseline_metrics": {
@@ -1020,6 +1020,28 @@
           "recommendation": "1. Investigate Sidekiq job failures and error patterns. 2. Debug and fix CrashloopBackOff pod. 3. Review and address system load issues. 4. Restore Redis monitoring. 5. Consider adjusting CPU limits due to throttling.",
           "id": "ins-c5cebb68",
           "timestamp": "2026-02-20T23:38:50.018757+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Health Issues Detected",
+          "insight": "Platform health check revealed multiple issues: 1) Pod CrashLoopBackOff state detected 2) High Sidekiq job error rates 3) High system load on some hosts 4) Redis monitoring gap (No Data state). While overall platform stability is maintained with 36/40 monitors OK, these issues require immediate attention.",
+          "evidence": "{\"monitors_summary\":{\"ok\":36,\"alert\":3,\"no_data\":1},\"resource_usage\":{\"cpu_throttling\":3662951.5247,\"memory_usage_percent\":26},\"critical_alerts\":[\"Pod CrashLoopBackOff\",\"High Sidekiq Error Rate\",\"High System Load\"]}",
+          "recommendation": "1. Investigate and resolve pod CrashLoopBackOff state 2. Debug Sidekiq job errors and implement error handling improvements 3. Review system load distribution and consider rebalancing workloads 4. Restore Redis monitoring capabilities 5. Implement automated scaling policies based on CPU throttling metrics",
+          "id": "ins-d49dd454",
+          "timestamp": "2026-02-20T23:39:01.254022+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "Platform showing multiple critical issues: Sidekiq job processing errors, pod crashes in Kubernetes, and system load problems. Redis monitoring shows data gaps. Total of 2,641 active metrics across infrastructure with 3 active alerts.",
+          "evidence": "{\"active_alerts\":3,\"total_metrics\":2641,\"critical_issues\":[\"Sidekiq job errors\",\"Pod CrashLoopBackOff\",\"System load alerts\",\"Redis monitoring gap\"]}",
+          "recommendation": "1. Investigate and resolve Sidekiq job processing errors\n2. Debug and fix CrashLoopBackOff pods\n3. Restore Redis monitoring\n4. Analyze system load issues and consider resource scaling",
+          "id": "ins-ae2a6a99",
+          "timestamp": "2026-02-20T23:39:11.263336+00:00",
           "status": "open"
         }
       ]
