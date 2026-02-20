@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-02-20T18:51:20.005254+00:00",
+  "last_updated": "2026-02-20T20:25:56.312399+00:00",
   "services": {
     "checkout-service": {
       "baseline_metrics": {
@@ -138,7 +138,15 @@
       ]
     },
     "payment-service": {
-      "baseline_metrics": {},
+      "baseline_metrics": {
+        "p99_latency_ms": 1094,
+        "avg_latency_ms": 472,
+        "health_score": 11,
+        "cpu_usage_percent": 81,
+        "rpm": 2904,
+        "error_rate_percent": 7.11,
+        "measured_at": "2026-02-20T20:25:56.191880+00:00"
+      },
       "patterns": [
         {
           "type": "dependency_bottleneck",
@@ -148,6 +156,36 @@
           "id": "pat-fd12f55e",
           "first_detected": "2026-02-20T16:42:46.159835+00:00",
           "last_confirmed": "2026-02-20T16:42:46.159839+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "latency_spike",
+          "description": "P99 latency spikes to 3x baseline every 4 hours, lasting 2-3 minutes. Correlates with garbage collection pauses \u2014 heap usage reaches 92% before GC triggers.",
+          "confidence": 0.8392746632043588,
+          "recommendation": "Tune JVM GC settings: switch from G1GC to ZGC for sub-millisecond pause times. Increase heap from 2GB to 3GB.",
+          "id": "pat-8136e6b9",
+          "first_detected": "2026-02-20T20:23:25.863825+00:00",
+          "last_confirmed": "2026-02-20T20:23:25.863833+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "periodic_overload",
+          "description": "CPU usage spikes above 85% every weekday between 9:00-10:30am UTC, correlating with business-hours traffic surge. Pattern detected across 22 observations over 3 weeks.",
+          "confidence": 0.9065549404670228,
+          "recommendation": "Configure pre-emptive auto-scaling at 8:45am UTC. Add 2 warm instances before the traffic ramp.",
+          "id": "pat-4848ecc3",
+          "first_detected": "2026-02-20T20:23:25.873185+00:00",
+          "last_confirmed": "2026-02-20T20:25:56.283942+00:00",
+          "occurrences": 2
+        },
+        {
+          "type": "cascade_risk",
+          "description": "When payment-gateway response time exceeds 2000ms, order-service and checkout-service degrade within 30 seconds. Observed in 18 of the last 20 incidents.",
+          "confidence": 0.961323930612583,
+          "recommendation": "Add 1500ms timeout with circuit breaker on payment-gateway calls. Implement retry with exponential backoff (100ms, 200ms, 400ms max).",
+          "id": "pat-fbca21a6",
+          "first_detected": "2026-02-20T20:25:56.312372+00:00",
+          "last_confirmed": "2026-02-20T20:25:56.312391+00:00",
           "occurrences": 1
         }
       ],
@@ -172,6 +210,61 @@
           "recommendation": "1. Contact payment-gateway provider for status update. 2. Consider implementing circuit breaker for external payment-gateway. 3. Scale payment-service if needed after external dependency is resolved.",
           "id": "ins-eab6f171",
           "timestamp": "2026-02-20T18:51:20.005228+00:00",
+          "status": "open"
+        },
+        {
+          "category": "cost",
+          "severity": "medium",
+          "title": "Over-provisioned \u2014 CPU utilization consistently below 15%",
+          "insight": "Average CPU utilization over the past 7 days is 9%, with peak never exceeding 28%. Current instance count of 3 replicas is 2x what traffic requires. Estimated monthly waste: $340.",
+          "evidence": "{\"p99_latency_ms\": 1129, \"avg_latency_ms\": 657, \"cpu_usage_percent\": 9, \"rpm\": 595, \"error_rate_percent\": 5.94, \"health_score\": 15}",
+          "recommendation": "Scale down from 3 to 2 replicas. Enable HPA with target CPU 60% to handle traffic spikes. Projected savings: $170/month.",
+          "id": "ins-efd22a64",
+          "timestamp": "2026-02-20T20:23:25.843277+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Single point of failure \u2014 no circuit breaker",
+          "insight": "This service has a direct synchronous dependency on an external service with no circuit breaker configured. If the external dependency degrades, cascading failures will propagate to 2 upstream services within seconds.",
+          "evidence": "{\"p99_latency_ms\": 1129, \"avg_latency_ms\": 657, \"cpu_usage_percent\": 9, \"rpm\": 595, \"error_rate_percent\": 5.94, \"health_score\": 15}",
+          "recommendation": "Implement circuit breaker pattern with 5-second timeout, 50% error threshold, and 30-second recovery window. Use SSM parameter for runtime configurability.",
+          "id": "ins-21bf46d3",
+          "timestamp": "2026-02-20T20:23:25.855492+00:00",
+          "status": "open"
+        },
+        {
+          "category": "cost",
+          "severity": "low",
+          "title": "Idle Redis cache \u2014 low hit rate",
+          "insight": "Cache hit rate is only 12% \u2014 most requests bypass cache due to short TTL (30s) on frequently accessed but rarely changing data. Cache infrastructure cost is $89/month with minimal benefit.",
+          "evidence": "{\"p99_latency_ms\": 1094, \"avg_latency_ms\": 472, \"cpu_usage_percent\": 81, \"rpm\": 2904, \"error_rate_percent\": 7.11, \"health_score\": 11}",
+          "recommendation": "Increase TTL to 300s for catalog data and 60s for user profiles. Expected cache hit rate improvement to 65%, reducing database load by ~40%.",
+          "id": "ins-06bbbee1",
+          "timestamp": "2026-02-20T20:25:56.207869+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Single point of failure \u2014 no circuit breaker",
+          "insight": "This service has a direct synchronous dependency on an external service with no circuit breaker configured. If the external dependency degrades, cascading failures will propagate to 5 upstream services within seconds.",
+          "evidence": "{\"p99_latency_ms\": 1094, \"avg_latency_ms\": 472, \"cpu_usage_percent\": 81, \"rpm\": 2904, \"error_rate_percent\": 7.11, \"health_score\": 11}",
+          "recommendation": "Implement circuit breaker pattern with 5-second timeout, 50% error threshold, and 30-second recovery window. Use SSM parameter for runtime configurability.",
+          "id": "ins-a7b087e9",
+          "timestamp": "2026-02-20T20:25:56.221531+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "low",
+          "title": "Async processing candidate",
+          "insight": "42% of request processing time is spent on non-blocking operations (logging, analytics events, notification dispatch). These operations do not affect the response to the end user.",
+          "evidence": "{\"p99_latency_ms\": 1094, \"avg_latency_ms\": 472, \"cpu_usage_percent\": 81, \"rpm\": 2904, \"error_rate_percent\": 7.11, \"health_score\": 11}",
+          "recommendation": "Move analytics and notification dispatch to async queue processing. Expected p99 reduction of 180ms for end-user requests.",
+          "id": "ins-cbd763d5",
+          "timestamp": "2026-02-20T20:25:56.264653+00:00",
           "status": "open"
         }
       ]
@@ -366,6 +459,34 @@
       "insights_generated": [],
       "session_id": "sess-7df06ef5",
       "timestamp": "2026-02-20T18:10:49.115770+00:00"
+    },
+    {
+      "trigger": "manual",
+      "services_analyzed": [
+        "payment-service"
+      ],
+      "findings_summary": "payment-service is in critical state with p99 at 1977ms and cascading failures affecting upstream services. Root cause: connection pool exhaustion under concurrent load in postgres-catalog. Executed emergency scaling and circuit breaker activation. Recovery validated \u2014 p99 dropped to 598ms.",
+      "actions_taken": [
+        "scale_ecs",
+        "update_ssm"
+      ],
+      "insights_generated": [],
+      "session_id": "sess-8a2de7f3",
+      "timestamp": "2026-02-20T20:23:25.773289+00:00"
+    },
+    {
+      "trigger": "manual",
+      "services_analyzed": [
+        "payment-service"
+      ],
+      "findings_summary": "payment-service is in critical state with p99 at 1977ms and cascading failures affecting upstream services. Root cause: connection pool exhaustion under concurrent load in postgres-catalog. Executed emergency scaling and circuit breaker activation. Recovery validated \u2014 p99 dropped to 598ms.",
+      "actions_taken": [
+        "scale_ecs",
+        "update_ssm"
+      ],
+      "insights_generated": [],
+      "session_id": "sess-dafef270",
+      "timestamp": "2026-02-20T20:25:56.089187+00:00"
     }
   ]
 }
