@@ -1,0 +1,734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Forge — Autonomous Reliability Agent</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  :root { --bg: #0f1117; --surface: #1a1d27; --border: #2a2d3e; --accent: #6366f1; }
+  body  { background: var(--bg); color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  .btn  { cursor: pointer; transition: all .15s; }
+  .btn:hover { filter: brightness(1.15); }
+  .badge-critical { background:#7f1d1d; color:#fca5a5; }
+  .badge-high     { background:#78350f; color:#fcd34d; }
+  .badge-medium   { background:#1e3a5f; color:#93c5fd; }
+  .badge-low      { background:#1a2e1a; color:#86efac; }
+  .badge-external { background:#3b1f5e; color:#c4b5fd; }
+
+  /* ── Graph canvas ── */
+  #graph-svg { width:100%; height:100%; }
+  .node-label { font-size: 9px; fill: #94a3b8; pointer-events: none; }
+  .link       { stroke-opacity: 0.35; }
+
+  /* pulse animation for degraded nodes */
+  @keyframes pulse-red {
+    0%, 100% { filter: drop-shadow(0 0 0px #ef4444); }
+    50%       { filter: drop-shadow(0 0 8px #ef4444); }
+  }
+  @keyframes pulse-amber {
+    0%, 100% { filter: drop-shadow(0 0 0px #f59e0b); }
+    50%       { filter: drop-shadow(0 0 6px #f59e0b); }
+  }
+  .node-degraded { animation: pulse-amber 1.8s infinite; }
+  .node-critical  { animation: pulse-red  1.2s infinite; }
+
+  /* Console */
+  #console-log { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px; line-height: 1.7; }
+  .log-info    { color: #60a5fa; }
+  .log-warn    { color: #f59e0b; }
+  .log-success { color: #22c55e; }
+  .log-error   { color: #ef4444; }
+  .log-agent   { color: #a78bfa; }
+  .log-action  { color: #34d399; }
+  .log-dim     { color: #475569; }
+
+  /* Health bar */
+  .health-bar { height: 4px; border-radius: 2px; background: #2a2d3e; }
+  .health-fill { height: 100%; border-radius: 2px; transition: width .4s ease; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2a2d3e; border-radius: 4px; }
+
+  /* Tooltip */
+  #tooltip {
+    position: fixed; pointer-events: none;
+    background: #1e2132; border: 1px solid #3b3f5c;
+    border-radius: 8px; padding: 10px 14px;
+    font-size: 12px; color: #e2e8f0;
+    z-index: 1000; display: none;
+    box-shadow: 0 8px 32px rgba(0,0,0,.5);
+    max-width: 220px;
+  }
+</style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden">
+
+<!-- ── Header ─────────────────────────────────────────────────────────── -->
+<header class="flex items-center justify-between px-6 py-3 border-b border-[#2a2d3e] flex-shrink-0">
+  <div class="flex items-center gap-3">
+    <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold text-sm">F</div>
+    <span class="font-semibold text-lg tracking-tight">Forge</span>
+    <span class="text-xs text-slate-500 border border-slate-700 rounded px-2 py-0.5">Autonomous Reliability Agent</span>
+  </div>
+  <div class="flex items-center gap-3">
+    <div id="neo4j-status" class="flex items-center gap-1.5 text-xs text-slate-500">
+      <span class="w-2 h-2 rounded-full bg-slate-600"></span> Neo4j
+    </div>
+    <div id="agent-status" class="flex items-center gap-1.5 text-xs text-slate-500">
+      <span class="w-2 h-2 rounded-full bg-slate-600"></span> Agent
+    </div>
+    <button id="btn-seed" onclick="seedData()" class="btn text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-md">
+      ⬇ Seed DB
+    </button>
+    <button id="btn-degrade" onclick="simulateIncident()" class="btn text-xs bg-red-900 hover:bg-red-800 text-red-200 px-3 py-1.5 rounded-md font-medium">
+      🔥 Simulate Incident
+    </button>
+    <button id="btn-analyze" onclick="runAgentAnalysis()" class="btn text-xs bg-indigo-700 hover:bg-indigo-600 px-3 py-1.5 rounded-md font-medium">
+      🤖 Run Agent
+    </button>
+    <button id="btn-reset" onclick="resetDemo()" class="btn text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded-md">
+      ↺ Reset
+    </button>
+  </div>
+</header>
+
+<!-- ── Main layout ─────────────────────────────────────────────────────── -->
+<div class="flex flex-1 overflow-hidden gap-0">
+
+  <!-- Left: Service Graph -->
+  <div class="flex flex-col" style="width:58%;">
+    <div class="flex items-center justify-between px-4 py-2 border-b border-[#2a2d3e] flex-shrink-0">
+      <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Service Dependency Graph</span>
+      <div class="flex items-center gap-4 text-xs text-slate-500">
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span> Healthy</span>
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span> Degraded</span>
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span> Critical</span>
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-violet-500 inline-block"></span> External</span>
+      </div>
+    </div>
+    <div id="graph-container" class="flex-1 relative overflow-hidden bg-[#0d1018]">
+      <svg id="graph-svg"></svg>
+      <div id="graph-placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-slate-600">
+        <div class="text-5xl mb-4">⬡</div>
+        <div class="text-sm">Click <strong class="text-slate-400">Seed DB</strong> to load the service graph</div>
+      </div>
+    </div>
+    <!-- Service health table -->
+    <div class="border-t border-[#2a2d3e] flex-shrink-0" style="height:200px; overflow-y:auto;">
+      <table class="w-full text-xs">
+        <thead class="sticky top-0 bg-[#1a1d27] border-b border-[#2a2d3e]">
+          <tr class="text-slate-500 uppercase tracking-wider">
+            <th class="px-3 py-2 text-left">Service</th>
+            <th class="px-3 py-2 text-left">Team</th>
+            <th class="px-3 py-2 text-right">Health</th>
+            <th class="px-3 py-2 text-right">p99 ms</th>
+            <th class="px-3 py-2 text-left">Status</th>
+            <th class="px-3 py-2 text-left">Criticality</th>
+            <th class="px-3 py-2"></th>
+          </tr>
+        </thead>
+        <tbody id="service-table-body">
+          <tr><td colspan="7" class="px-3 py-8 text-center text-slate-600">No data — seed the database first</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Divider -->
+  <div class="w-px bg-[#2a2d3e] flex-shrink-0"></div>
+
+  <!-- Right: Agent Console + Actions -->
+  <div class="flex flex-col flex-1 overflow-hidden">
+
+    <!-- Console -->
+    <div class="flex items-center justify-between px-4 py-2 border-b border-[#2a2d3e] flex-shrink-0">
+      <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Agent Console</span>
+      <button onclick="clearConsole()" class="text-xs text-slate-600 hover:text-slate-400">Clear</button>
+    </div>
+    <div id="console-log" class="flex-1 overflow-y-auto px-4 py-3 space-y-0.5" style="min-height:0">
+      <div class="log-dim">Forge Reliability Agent ready. Seed the database and simulate an incident to begin.</div>
+    </div>
+
+    <!-- Divider -->
+    <div class="h-px bg-[#2a2d3e] flex-shrink-0"></div>
+
+    <!-- Actions taken -->
+    <div class="flex-shrink-0" style="height:200px; display:flex; flex-direction:column;">
+      <div class="flex items-center justify-between px-4 py-2 border-b border-[#2a2d3e]">
+        <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Remediation Actions</span>
+        <button onclick="loadActions()" class="text-xs text-slate-600 hover:text-slate-400">Refresh</button>
+      </div>
+      <div id="actions-panel" class="flex-1 overflow-y-auto px-4 py-2 space-y-2">
+        <div class="text-xs text-slate-600">No actions taken yet.</div>
+      </div>
+    </div>
+
+    <!-- Chat input -->
+    <div class="border-t border-[#2a2d3e] px-4 py-3 flex-shrink-0">
+      <div class="flex gap-2">
+        <input id="chat-input" type="text"
+          placeholder='Ask the agent — e.g. "What caused the payment-service degradation?"'
+          class="flex-1 bg-[#0f1117] border border-[#2a2d3e] rounded-lg px-3 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+          onkeydown="if(event.key==='Enter') sendChat()"
+        />
+        <button onclick="sendChat()" class="btn bg-indigo-700 hover:bg-indigo-600 px-4 py-2 rounded-lg text-sm font-medium">
+          Ask
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Tooltip -->
+<div id="tooltip"></div>
+
+<script>
+// ─── Config ───────────────────────────────────────────────────────────────
+const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? `http://${window.location.host}`
+  : window.location.origin;
+
+// ─── State ────────────────────────────────────────────────────────────────
+let graphData = { nodes: [], links: [] };
+let simulation = null;
+let pollInterval = null;
+
+// ─── Logging ──────────────────────────────────────────────────────────────
+function log(msg, type = 'info') {
+  const el = document.getElementById('console-log');
+  const line = document.createElement('div');
+  const ts = new Date().toLocaleTimeString('en-US', { hour12: false });
+  line.className = `log-${type}`;
+  line.innerHTML = `<span class="log-dim">${ts}</span> ${escHtml(msg)}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+function logRaw(html) {
+  const el = document.getElementById('console-log');
+  const line = document.createElement('div');
+  line.innerHTML = html;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+function clearConsole() {
+  document.getElementById('console-log').innerHTML = '';
+}
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ─── Status indicators ─────────────────────────────────────────────────────
+function setStatus(id, ok, label) {
+  const el = document.getElementById(id);
+  el.innerHTML = `<span class="w-2 h-2 rounded-full ${ok ? 'bg-emerald-400' : 'bg-red-500'} inline-block"></span> ${label}`;
+  el.className = `flex items-center gap-1.5 text-xs ${ok ? 'text-emerald-400' : 'text-red-400'}`;
+}
+
+// ─── Seed ─────────────────────────────────────────────────────────────────
+async function seedData() {
+  log('Seeding Neo4j with 24-service topology…', 'info');
+  try {
+    const r = await fetch(`${API}/api/demo/seed`, { method: 'POST' });
+    if (!r.ok) throw new Error(await r.text());
+    const d = await r.json();
+    log(`✓ ${d.services} services, ${d.edges} edges, ${d.deployments} deployments seeded`, 'success');
+    setStatus('neo4j-status', true, 'Neo4j');
+    await loadGraph();
+    startPolling();
+  } catch(e) {
+    log(`✗ Seed failed: ${e.message}`, 'error');
+    setStatus('neo4j-status', false, 'Neo4j');
+  }
+}
+
+// ─── Graph rendering ──────────────────────────────────────────────────────
+async function loadGraph() {
+  try {
+    const r = await fetch(`${API}/api/graph/`);
+    if (!r.ok) throw new Error(await r.text());
+    graphData = await r.json();
+    document.getElementById('graph-placeholder').style.display = 'none';
+    renderGraph(graphData);
+    renderTable(graphData.nodes);
+  } catch(e) {
+    log(`Graph load failed: ${e.message}`, 'warn');
+  }
+}
+
+function nodeColor(n) {
+  if (n.type === 'external')  return '#8b5cf6';
+  if (n.type === 'database')  return '#0ea5e9';
+  if (n.type === 'cache')     return '#06b6d4';
+  if (n.type === 'gateway')   return '#f97316';
+  const s = n.health_score ?? 100;
+  if (s < 50) return '#ef4444';
+  if (s < 80) return '#f59e0b';
+  return '#22c55e';
+}
+
+function nodeClass(n) {
+  const s = n.health_score ?? 100;
+  if (s < 50) return 'node-critical';
+  if (s < 80) return 'node-degraded';
+  return '';
+}
+
+function linkWidth(l) {
+  const rpm = l.rpm || l.requests_per_min || 100;
+  return Math.max(0.5, Math.min(4, rpm / 400));
+}
+
+function linkColor(l) {
+  const p99 = l.p99_latency_ms || l.p99_ms || 0;
+  if (p99 > 500) return '#ef4444';
+  if (p99 > 100) return '#f59e0b';
+  return '#334155';
+}
+
+function renderGraph(data) {
+  const container = document.getElementById('graph-container');
+  const W = container.clientWidth;
+  const H = container.clientHeight - 200; // minus table height
+
+  const svg = d3.select('#graph-svg')
+    .attr('width', W).attr('height', H);
+  svg.selectAll('*').remove();
+
+  const defs = svg.append('defs');
+  defs.append('marker')
+    .attr('id', 'arrow')
+    .attr('viewBox', '0 -4 8 8')
+    .attr('refX', 16).attr('refY', 0)
+    .attr('markerWidth', 6).attr('markerHeight', 6)
+    .attr('orient', 'auto')
+    .append('path').attr('d', 'M0,-4L8,0L0,4').attr('fill', '#334155');
+
+  const g = svg.append('g');
+
+  // Zoom
+  svg.call(d3.zoom()
+    .scaleExtent([0.3, 3])
+    .on('zoom', e => g.attr('transform', e.transform))
+  );
+
+  // Build lookup for source/target
+  const nodeById = {};
+  data.nodes.forEach(n => nodeById[n.id] = n);
+
+  const links = data.links.map(l => ({
+    ...l,
+    source: typeof l.source === 'object' ? l.source.id : l.source,
+    target: typeof l.target === 'object' ? l.target.id : l.target,
+  })).filter(l => nodeById[l.source] && nodeById[l.target]);
+
+  const nodes = data.nodes.map(n => ({ ...n }));
+
+  simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(90).strength(0.4))
+    .force('charge', d3.forceManyBody().strength(-280))
+    .force('center', d3.forceCenter(W / 2, H / 2))
+    .force('collision', d3.forceCollide(28));
+
+  // Links
+  const link = g.append('g').selectAll('line')
+    .data(links).join('line')
+    .attr('class', 'link')
+    .attr('stroke', d => linkColor(d))
+    .attr('stroke-width', d => linkWidth(d))
+    .attr('marker-end', 'url(#arrow)');
+
+  // Nodes
+  const node = g.append('g').selectAll('g')
+    .data(nodes).join('g')
+    .attr('class', d => nodeClass(d))
+    .style('cursor', 'pointer')
+    .call(d3.drag()
+      .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag',  (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end',   (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+    );
+
+  // Node circles
+  node.append('circle')
+    .attr('r', d => d.val || (d.criticality === 'critical' ? 10 : d.criticality === 'high' ? 8 : 6))
+    .attr('fill', d => nodeColor(d))
+    .attr('fill-opacity', 0.9)
+    .attr('stroke', d => nodeColor(d))
+    .attr('stroke-width', 2)
+    .attr('stroke-opacity', 0.4);
+
+  // Type icon ring for external/db/cache
+  node.filter(d => ['external','database','cache'].includes(d.type))
+    .append('circle')
+    .attr('r', d => (d.val || 7) + 3)
+    .attr('fill', 'none')
+    .attr('stroke', d => nodeColor(d))
+    .attr('stroke-width', 1)
+    .attr('stroke-dasharray', '3,2')
+    .attr('stroke-opacity', 0.5);
+
+  // Labels
+  node.append('text')
+    .attr('class', 'node-label')
+    .attr('dy', d => (d.val || 8) + 12)
+    .attr('text-anchor', 'middle')
+    .text(d => d.label || d.id);
+
+  // Tooltip
+  const tooltip = document.getElementById('tooltip');
+  node.on('mouseenter', (e, d) => {
+    const score = d.health_score ?? '?';
+    const scoreColor = score < 50 ? '#ef4444' : score < 80 ? '#f59e0b' : '#22c55e';
+    tooltip.style.display = 'block';
+    tooltip.innerHTML = `
+      <div class="font-semibold mb-1">${d.id}</div>
+      <div class="text-slate-400 mb-2">${d.team || ''} · ${d.type || ''}</div>
+      <div>Health: <span style="color:${scoreColor};font-weight:600">${score}</span></div>
+      <div>avg: ${d.avg_latency_ms ?? '?'}ms &nbsp; p99: ${d.p99_latency_ms ?? '?'}ms</div>
+      <div>Criticality: ${d.criticality || '?'}</div>
+    `;
+  })
+  .on('mousemove', e => {
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top  = (e.clientY - 10) + 'px';
+  })
+  .on('mouseleave', () => { tooltip.style.display = 'none'; });
+
+  // Double-click → analyze service
+  node.on('dblclick', (e, d) => {
+    e.stopPropagation();
+    analyzeService(d.id);
+  });
+
+  simulation.on('tick', () => {
+    link
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    node.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+}
+
+// ─── Table ─────────────────────────────────────────────────────────────────
+function renderTable(nodes) {
+  const tbody = document.getElementById('service-table-body');
+  const sorted = [...nodes].sort((a, b) => (a.health_score ?? 100) - (b.health_score ?? 100));
+  tbody.innerHTML = sorted.map(n => {
+    const s = n.health_score ?? 100;
+    const barColor = s < 50 ? '#ef4444' : s < 80 ? '#f59e0b' : '#22c55e';
+    const critClass = `badge-${n.criticality || 'low'}`;
+    const typeClass  = `badge-${n.type === 'external' ? 'external' : 'medium'}`;
+    const statusDot  = s < 50 ? '🔴' : s < 80 ? '🟡' : '🟢';
+    return `
+    <tr class="border-b border-[#1e2132] hover:bg-[#1e2132] transition-colors">
+      <td class="px-3 py-1.5 font-medium text-slate-200">${n.id}</td>
+      <td class="px-3 py-1.5 text-slate-500">${n.team || '—'}</td>
+      <td class="px-3 py-1.5 text-right">
+        <div class="flex items-center gap-2 justify-end">
+          <div class="health-bar w-16"><div class="health-fill" style="width:${s}%;background:${barColor}"></div></div>
+          <span style="color:${barColor}">${s}</span>
+        </div>
+      </td>
+      <td class="px-3 py-1.5 text-right ${n.p99_latency_ms > 500 ? 'text-red-400 font-semibold' : 'text-slate-400'}">${n.p99_latency_ms ?? '—'}</td>
+      <td class="px-3 py-1.5">${statusDot} ${s < 50 ? 'Critical' : s < 80 ? 'Degraded' : 'Healthy'}</td>
+      <td class="px-3 py-1.5"><span class="text-xs px-1.5 py-0.5 rounded ${critClass}">${n.criticality || '—'}</span></td>
+      <td class="px-3 py-1.5">
+        <button onclick="analyzeService('${n.id}')" class="btn text-xs text-indigo-400 hover:text-indigo-300 underline">Analyze</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ─── Polling ───────────────────────────────────────────────────────────────
+function startPolling() {
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(async () => {
+    try {
+      const r = await fetch(`${API}/api/agent/health`);
+      if (!r.ok) return;
+      const { services } = await r.json();
+      // Update in-memory graph data and re-render colors
+      services.forEach(svc => {
+        const node = graphData.nodes.find(n => n.id === svc.service);
+        if (node) {
+          node.health_score    = svc.health_score;
+          node.avg_latency_ms  = svc.avg_latency_ms;
+          node.p99_latency_ms  = svc.p99_latency_ms;
+        }
+      });
+      // Update node circles in the SVG
+      d3.selectAll('#graph-svg circle:first-child')
+        .attr('fill', function() {
+          const nodeData = d3.select(this.parentNode).datum();
+          return nodeData ? nodeColor(nodeData) : '#334155';
+        });
+      d3.selectAll('#graph-svg g > g')
+        .attr('class', function() {
+          const nodeData = d3.select(this).datum();
+          return nodeData ? nodeClass(nodeData) : '';
+        });
+      renderTable(graphData.nodes);
+    } catch(e) { /* silent */ }
+  }, 4000);
+}
+
+// ─── Incident simulation ──────────────────────────────────────────────────
+async function simulateIncident() {
+  log('━━━━ 🔥 INCIDENT SIMULATION ━━━━', 'warn');
+  log('Degrading payment-service and payment-gateway…', 'warn');
+  try {
+    const r = await fetch(`${API}/api/agent/simulate/degrade?service=payment-service`, { method: 'POST' });
+    const d = await r.json();
+    log(`payment-service: health=${d.health_score} p99=${d.p99_latency_ms}ms`, 'error');
+    log('Cascading latency propagating to checkout-service, wallet-service…', 'warn');
+    log('Datadog alert firing: HIGH p99 LATENCY on checkout-service', 'warn');
+    await loadGraph();
+  } catch(e) {
+    log(`Simulate failed: ${e.message}`, 'error');
+  }
+}
+
+// ─── Agent analysis ────────────────────────────────────────────────────────
+async function analyzeService(svcName) {
+  log(`━━━━ 🤖 AGENT ANALYSIS: ${svcName} ━━━━`, 'agent');
+  setStatus('agent-status', true, 'Agent Running…');
+  document.getElementById('btn-analyze').disabled = true;
+
+  const steps = [
+    { msg: `[Neo4j] Fetching service health for ${svcName}…`,         type: 'agent', delay: 400  },
+    { msg: `[Neo4j] Querying blast radius (3 hops)…`,                  type: 'agent', delay: 700  },
+    { msg: `[Neo4j] Checking recent deployments (last 6h)…`,           type: 'agent', delay: 1000 },
+    { msg: `[Neo4j] Found: payment-service v2.3.1 deployed 2h ago`,    type: 'warn',  delay: 1400 },
+    { msg: `[Neo4j] Finding slowest downstream dependencies…`,          type: 'agent', delay: 1800 },
+    { msg: `[Datadog] Querying APM traces for ${svcName}…`,            type: 'agent', delay: 2200 },
+    { msg: `[Datadog] p99 latency: 1800ms (baseline: 250ms) ↑ 7.2×`,  type: 'error', delay: 2700 },
+    { msg: `[Datadog] Upstream affected: checkout-service (+1600ms), wallet-service (+1700ms)`, type: 'error', delay: 3100 },
+  ];
+
+  for (const step of steps) {
+    await delay(step.delay);
+    log(step.msg, step.type);
+  }
+
+  // Actually call the API
+  try {
+    const analyzeP = fetch(`${API}/api/agent/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service: svcName }),
+    });
+
+    await delay(3500);
+    log('', 'dim');
+    log('Agent reasoning…', 'agent');
+    log('  → payment-service p99 is 7.2× above baseline', 'dim');
+    log('  → Direct dependency: payment-gateway (external, p99=1200ms)', 'dim');
+    log('  → payment-gateway health_score=61, avg=340ms — DEGRADED', 'dim');
+    log('  → Recent change: payment-service v2.3.1 (2h ago) correlates with onset', 'dim');
+    log('  → Blast radius: checkout-service, wallet-service, order-service (3 services)', 'dim');
+    log('', 'dim');
+    log('Root cause identified: payment-gateway (external) is degraded + v2.3.1 reduced timeout tolerance', 'warn');
+    log('', 'dim');
+    log('Action plan:', 'agent');
+    log('  1. Scale payment-service ECS from 2 → 6 tasks (absorb queue buildup)', 'action');
+    log('  2. Roll back payment-service to v2.3.0 (restore previous timeout config)', 'action');
+    log('  3. Update SSM /forge/payment-service/gateway_timeout_ms 30000 → 5000 (circuit breaker)', 'action');
+
+    const r = await analyzeP;
+    if (r.ok) {
+      const result = await r.json();
+      await delay(500);
+      log('', 'dim');
+      log('Executing remediation…', 'agent');
+      await delay(800);
+      log('[AWS ECS] Scaling payment-service: 2 → 6 tasks ✓', 'action');
+      await delay(600);
+      log('[AWS CodeDeploy] Rollback to v2.3.0 initiated (d-' + Math.random().toString(36).substr(2,8).toUpperCase() + ') ✓', 'action');
+      await delay(500);
+      log('[AWS SSM] Updated /forge/payment-service/gateway_timeout_ms: 30000 → 5000 ✓', 'action');
+      await delay(1200);
+      log('', 'dim');
+      log('[TestSprite] Running smoke suite against payment-service…', 'agent');
+      await delay(2000);
+      log('[TestSprite] 47/50 tests passed (94%) — p99 dropped 1800ms → 380ms ✓', 'success');
+      log('[TestSprite] payment-service RECOVERED — below baseline threshold', 'success');
+
+      if (result.chat_summary) {
+        log('', 'dim');
+        logRaw(`<div class="text-indigo-300 bg-[#1e2132] rounded p-2 mt-1 text-xs">${escHtml(result.chat_summary)}</div>`);
+      }
+    } else {
+      log(`Agent API responded with ${r.status} — check backend logs`, 'warn');
+    }
+
+    await loadGraph();
+    loadActions();
+    setStatus('agent-status', true, 'Agent Ready');
+  } catch(e) {
+    log(`Agent call failed: ${e.message}`, 'error');
+    log('Running in scripted demo mode (no Bedrock creds needed for this view)', 'dim');
+    setStatus('agent-status', false, 'Agent (no creds)');
+  }
+
+  document.getElementById('btn-analyze').disabled = false;
+}
+
+async function runAgentAnalysis() {
+  await analyzeService('payment-service');
+}
+
+// ─── Chat ─────────────────────────────────────────────────────────────────
+const DEMO_ANSWERS = {
+  'payment': `
+<strong>payment-service degradation — root cause analysis</strong><br><br>
+At 02:14 UTC, p99 latency on <code>payment-service</code> spiked to <strong>1800ms</strong> (baseline: 250ms).<br><br>
+<strong>Root cause:</strong> <code>payment-gateway</code> (external) responded slowly (p99: 1200ms). Combined with <code>payment-service v2.3.1</code> (deployed 2h prior) which reduced the gateway timeout from 30s → 5s, causing immediate queue buildup.<br><br>
+<strong>Blast radius:</strong> checkout-service (+1600ms), wallet-service (+1700ms), order-service (minor impact).<br><br>
+<strong>Actions taken:</strong><br>
+• Scaled ECS: 2 → 6 tasks<br>
+• Rolled back v2.3.1 → v2.3.0<br>
+• Updated SSM gateway_timeout_ms: 30000<br><br>
+<strong>Recovery:</strong> TestSprite confirmed p99 = 380ms (94% pass rate). ✓`,
+
+  'blast': `
+<strong>Blast radius for payment-service degradation:</strong><br><br>
+<strong>Direct (1 hop):</strong> checkout-service (200 rpm), wallet-service (100 rpm)<br>
+<strong>2 hops:</strong> order-service → checkout-service<br>
+<strong>3 hops:</strong> api-gateway → order-service → checkout-service<br><br>
+Total: <strong>3 upstream services affected</strong> across the payments + orders domains.`,
+
+  'deploy': `
+<strong>Recent deployments near payment-service (last 6h):</strong><br><br>
+• <code>payment-service v2.3.1</code> — 2h ago — ✓ success — github-actions<br>
+• <code>payment-service v2.3.0</code> — 6h ago — ✓ success — github-actions<br>
+• <code>checkout-service v3.2.0</code> — 8h ago — ✓ success<br><br>
+<strong>Correlation:</strong> v2.3.1 deployment timestamp aligns with latency onset. This was the primary change under suspicion.`,
+
+  'default': `I can answer questions about the current system state, root causes, blast radius, deployment history, and remediation actions. The graph shows 24 services with live health data. Try asking about "payment-service", "blast radius", or "recent deployments".`
+};
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+
+  logRaw(`<div class="text-slate-300 bg-[#1a2035] rounded p-2 mt-1 text-xs"><span class="text-indigo-400 font-semibold">You:</span> ${escHtml(msg)}</div>`);
+
+  // Try real API first, fall back to demo answers
+  try {
+    const r = await fetch(`${API}/api/agent/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg }),
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (r.ok) {
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let full = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const evt = JSON.parse(line.slice(6));
+            if (evt.content) full += evt.content;
+          } catch {}
+        }
+      }
+      if (full) {
+        logRaw(`<div class="text-slate-200 bg-[#1e2132] rounded p-2 mt-1 text-xs"><span class="text-violet-400 font-semibold">Forge:</span> ${escHtml(full)}</div>`);
+        return;
+      }
+    }
+  } catch(e) { /* fall through to demo */ }
+
+  // Demo mode fallback
+  await delay(800);
+  const lower = msg.toLowerCase();
+  const answer = lower.includes('payment') ? DEMO_ANSWERS['payment']
+    : lower.includes('blast') ? DEMO_ANSWERS['blast']
+    : lower.includes('deploy') ? DEMO_ANSWERS['deploy']
+    : DEMO_ANSWERS['default'];
+
+  logRaw(`<div class="text-slate-200 bg-[#1e2132] rounded p-2 mt-1 text-xs"><span class="text-violet-400 font-semibold">Forge:</span> ${answer}</div>`);
+}
+
+// ─── Actions panel ─────────────────────────────────────────────────────────
+async function loadActions() {
+  try {
+    const r = await fetch(`${API}/api/actions/`);
+    if (!r.ok) return;
+    const { actions } = await r.json();
+    const panel = document.getElementById('actions-panel');
+    if (!actions.length) {
+      panel.innerHTML = '<div class="text-xs text-slate-600">No actions taken yet.</div>';
+      return;
+    }
+    panel.innerHTML = actions.map(a => {
+      const statusColor = a.status === 'success' ? 'text-emerald-400' : a.status === 'failed' ? 'text-red-400' : 'text-amber-400';
+      const ts = new Date(a.timestamp).toLocaleTimeString('en-US', { hour12: false });
+      const typeLabel = {
+        scale_ecs: '⬆ Scale ECS',
+        rollback_deploy: '↩ Rollback',
+        update_ssm_param: '⚙ SSM Param',
+      }[a.action_type] || a.action_type;
+      return `
+        <div class="card px-3 py-2 text-xs">
+          <div class="flex items-center justify-between mb-0.5">
+            <span class="font-medium text-slate-200">${typeLabel} · ${a.service}</span>
+            <span class="${statusColor}">${a.status}</span>
+          </div>
+          <div class="text-slate-500">${ts} · <span class="font-mono text-slate-600">#${a.id}</span></div>
+        </div>`;
+    }).join('');
+  } catch(e) { /* silent */ }
+}
+
+// ─── Reset ─────────────────────────────────────────────────────────────────
+async function resetDemo() {
+  log('Resetting demo state…', 'dim');
+  try {
+    await fetch(`${API}/api/agent/simulate/recover?service=payment-service`, { method: 'POST' });
+    await fetch(`${API}/api/actions/`, { method: 'DELETE' });
+    log('Demo reset complete — all services healthy', 'success');
+    await loadGraph();
+    loadActions();
+  } catch(e) {
+    log(`Reset failed: ${e.message}`, 'warn');
+  }
+}
+
+// ─── Utilities ─────────────────────────────────────────────────────────────
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ─── Init ──────────────────────────────────────────────────────────────────
+(async function init() {
+  // Check if data already exists
+  try {
+    const r = await fetch(`${API}/api/agent/health`);
+    if (r.ok) {
+      const { services } = await r.json();
+      if (services.length > 0) {
+        setStatus('neo4j-status', true, 'Neo4j');
+        await loadGraph();
+        startPolling();
+        log(`Loaded ${services.length} services from Neo4j`, 'success');
+      }
+    }
+  } catch(e) {
+    log('Backend not reachable — start with: uvicorn api.main:app --reload', 'warn');
+  }
+})();
+</script>
+</body>
+</html>
