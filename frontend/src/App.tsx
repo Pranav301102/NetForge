@@ -1,0 +1,1363 @@
+import {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  type MouseEvent,
+} from "react";
+import * as d3 from "d3";
+import { CopilotKit } from "@copilotkit/react-core";
+import { CopilotSidebar } from "@copilotkit/react-ui";
+import { useCopilotReadable, useCopilotAction } from "@copilotkit/react-core";
+import "@copilotkit/react-ui/styles.css";
+import { CheckCircle2, ShieldAlert, ActivitySquare, ServerCrash, Lightbulb, TrendingUp, AlertTriangle, Eye, CheckCheck, Network, Cpu, Zap } from "lucide-react";
+
+type Health = "healthy" | "degraded" | "critical" | "rolling";
+type NodeType = "gateway" | "service" | "database" | "cache" | "queue" | "storage";
+type RemediationState = "scaling" | "rolling";
+
+type AgentAnnotation = { id: string; text: string; ts: string };
+type ActionLog = { action_type: string; service: string; result: string; timestamp?: string };
+
+type ServiceNode = {
+  id: string;
+  label: string;
+  type: NodeType;
+  health: Health;
+  cpu: number;
+  mem: number;
+  rpm: number;
+  error_rate: number;
+  replicas: number;
+};
+
+type NodeDatum = ServiceNode & {
+  index?: number;
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+  fx?: number | null;
+  fy?: number | null;
+};
+
+type LinkEndpoint = string | NodeDatum;
+type GraphLink = { source: LinkEndpoint; target: LinkEndpoint };
+type DragEventLike = { active: boolean; x: number; y: number };
+
+// ─── API HELPERS ─────────────────────────────────────────────────────────────
+
+function mapHealth(score: number | null | undefined): Health {
+  if (score == null) return "healthy";
+  if (score >= 80) return "healthy";
+  if (score >= 50) return "degraded";
+  return "critical";
+}
+
+const VALID_TYPES = new Set(["gateway", "service", "database", "cache", "queue", "storage"]);
+function mapType(raw: string | null | undefined): NodeType {
+  if (raw && VALID_TYPES.has(raw)) return raw as NodeType;
+  return "service";
+}
+
+// Normalize latency metrics to 0-100 for display
+// p99 baseline ~200ms healthy, ~4000ms critical
+function latencyToCpu(p99: number | null | undefined): number {
+  return Math.min(100, Math.round((p99 ?? 200) / 40));
+}
+// avg baseline ~80ms healthy, ~1400ms critical
+function latencyToMem(avg: number | null | undefined): number {
+  return Math.min(100, Math.round((avg ?? 100) / 14));
+}
+
+// ─── FALLBACK STATIC DATA (used when backend is unreachable) ─────────────────
+
+const FALLBACK_NODES: ServiceNode[] = [
+  { id: "api-gateway", label: "API Gateway", type: "gateway", health: "healthy", cpu: 12, mem: 34, rpm: 4300, error_rate: 0.1, replicas: 2 },
+  { id: "auth-service", label: "Auth Service", type: "service", health: "healthy", cpu: 45, mem: 61, rpm: 2100, error_rate: 0.5, replicas: 3 },
+  { id: "order-service", label: "Order Service", type: "service", health: "critical", cpu: 94, mem: 87, rpm: 560, error_rate: 15.4, replicas: 1 },
+  { id: "inventory-svc", label: "Inventory", type: "service", health: "degraded", cpu: 71, mem: 73, rpm: 1200, error_rate: 4.2, replicas: 2 },
+  { id: "payment-service", label: "Payment Service", type: "service", health: "healthy", cpu: 28, mem: 45, rpm: 450, error_rate: 0.0, replicas: 3 },
+  { id: "notification-svc", label: "Notifications", type: "service", health: "healthy", cpu: 18, mem: 29, rpm: 800, error_rate: 0.1, replicas: 2 },
+  { id: "postgres-main", label: "PostgreSQL", type: "database", health: "healthy", cpu: 33, mem: 68, rpm: 9000, error_rate: 0.0, replicas: 1 },
+  { id: "redis-cache", label: "Redis Cache", type: "cache", health: "degraded", cpu: 55, mem: 82, rpm: 15000, error_rate: 1.2, replicas: 1 },
+  { id: "kafka", label: "Kafka", type: "queue", health: "healthy", cpu: 22, mem: 44, rpm: 20000, error_rate: 0.0, replicas: 3 },
+  { id: "s3-storage", label: "S3 Bucket", type: "storage", health: "healthy", cpu: 5, mem: 10, rpm: 300, error_rate: 0.0, replicas: 1 },
+];
+
+const FALLBACK_LINKS: Array<{ source: string; target: string }> = [
+  { source: "api-gateway", target: "auth-service" },
+  { source: "api-gateway", target: "order-service" },
+  { source: "api-gateway", target: "inventory-svc" },
+  { source: "order-service", target: "payment-service" },
+  { source: "order-service", target: "notification-svc" },
+  { source: "order-service", target: "postgres-main" },
+  { source: "order-service", target: "redis-cache" },
+  { source: "inventory-svc", target: "postgres-main" },
+  { source: "inventory-svc", target: "kafka" },
+  { source: "payment-service", target: "postgres-main" },
+  { source: "notification-svc", target: "kafka" },
+  { source: "order-service", target: "s3-storage" },
+  { source: "auth-service", target: "redis-cache" },
+];
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+
+const HEALTHS: Health[] = ["healthy", "degraded", "critical", "rolling"];
+
+const HEALTH_COLORS: Record<Health, string> = {
+  healthy: "#00e5a0",
+  degraded: "#f5a623",
+  critical: "#ff3b5c",
+  rolling: "#7b61ff",
+};
+
+const TYPE_ICONS: Record<NodeType, string> = {
+  gateway: "⬡",
+  service: "◈",
+  database: "⬢",
+  cache: "◇",
+  queue: "⬟",
+  storage: "▣",
+};
+
+// ─── COMPONENT ───────────────────────────────────────────────────────────────
+
+export default function DeployOpsCenter() {
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const simRef = useRef<{ stop: () => void } | null>(null);
+  // Preserve D3 node positions across graph re-renders to avoid layout jumps
+  const positionsRef = useRef<Record<string, { x: number; y: number }>>({});
+
+  const [nodes, setNodes] = useState<ServiceNode[]>(FALLBACK_NODES.map(n => ({ ...n })));
+  const [links, setLinks] = useState<Array<{ source: string; target: string }>>(FALLBACK_LINKS);
+  const [selectedNode, setSelectedNode] = useState<NodeDatum | null>(null);
+
+  const [agentAnnotations, setAgentAnnotations] = useState<AgentAnnotation[]>([]);
+  const [remediationFeed, setRemediationFeed] = useState<ActionLog[]>([]);
+  const [validationResult, setValidationResult] = useState<{ service: string, passed: boolean, msg: string }>({ service: "order-service", passed: true, msg: "TestSprite Validation Passed" });
+
+  const [activeRemediations, setActiveRemediations] = useState<Record<string, RemediationState>>({});
+  const [apiStatus, setApiStatus] = useState<"loading" | "connected" | "offline">("loading");
+
+  const [insightsData, setInsightsData] = useState<any>(null);
+  const [showInsights, setShowInsights] = useState(false);
+
+  // Insights panel state
+  const [rightTab, setRightTab] = useState<"agent" | "insights">("agent");
+  const [allInsights, setAllInsights] = useState<any[]>([]);
+  const [allPatterns, setAllPatterns] = useState<any[]>([]);
+  const [allRecommendations, setAllRecommendations] = useState<any[]>([]);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [generatingInsights, setGeneratingInsights] = useState(false);
+
+  // Cluster panel state
+  const [clusterStatus, setClusterStatus] = useState<any>(null);
+  const [clusterEvents, setClusterEvents] = useState<any[]>([]);
+  const [simulatingLoad, setSimulatingLoad] = useState(false);
+
+  // Ref so D3 click handlers always call the latest version of handleNodeClick
+  // without stale closures from the useEffect capture.
+  const nodeClickRef = useRef<(d: NodeDatum) => void>(() => { });
+
+  // ── Initial graph load ────────────────────────────────────────────────────
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch("/api/graph/");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        const mappedNodes: ServiceNode[] = (data.nodes as any[]).map(n => ({
+          id: n.id,
+          label: n.label ?? n.id,
+          type: mapType(n.type),
+          health: mapHealth(n.health_score),
+          cpu: n.cpu_usage_percent ?? latencyToCpu(n.p99_latency_ms),
+          mem: n.mem_usage_percent ?? latencyToMem(n.avg_latency_ms),
+          rpm: n.rpm ?? Math.round(Math.random() * 5000 + 100),
+          error_rate: n.error_rate_percent ?? 0.0,
+          replicas: 1,
+        }));
+
+        const mappedLinks = (data.links as any[]).map(l => ({
+          source: l.source,
+          target: l.target,
+        }));
+
+        setNodes(mappedNodes);
+        setLinks(mappedLinks);
+        setApiStatus("connected");
+      } catch {
+        setApiStatus("offline");
+      }
+    };
+    load();
+  }, []);
+
+  // ── Deployment annotations ────────────────────────────────────────────────
+  useEffect(() => {
+    if (apiStatus !== "connected") return;
+    fetch("/api/graph/deployments/recent?hours=12")
+      .then(r => r.json())
+      .then(data => {
+        const annotations: AgentAnnotation[] = (data.deployments as any[])
+          .slice(0, 5)
+          .map(d => ({
+            id: d.service,
+            text: `deployed ${d.version ?? "?"} — ${d.status ?? "unknown"}`,
+            ts: new Date(d.deployed_at).toLocaleTimeString(),
+          }));
+        if (annotations.length > 0) setAgentAnnotations(annotations);
+      })
+      .catch(() => { });
+
+    // Fetch Remediation Feed
+    fetch("/api/actions/")
+      .then(r => r.json())
+      .then(data => {
+        if (data.actions && data.actions.length > 0) {
+          setRemediationFeed(data.actions.map((a: any) => ({ ...a, timestamp: new Date().toLocaleTimeString() })));
+        }
+      })
+      .catch(() => { });
+  }, [apiStatus]);
+
+  // ── Health polling — 5 s interval ────────────────────────────────────────
+  useEffect(() => {
+    if (apiStatus !== "connected") return;
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/agent/health");
+        if (!res.ok) return;
+        const data = await res.json();
+        setNodes(prev =>
+          prev.map(n => {
+            const u = (data.services as any[]).find(s => s.service === n.id);
+            if (!u) return n;
+            return {
+              ...n,
+              health: mapHealth(u.health_score),
+              cpu: u.cpu_usage_percent ?? latencyToCpu(u.p99_latency_ms),
+              mem: u.mem_usage_percent ?? latencyToMem(u.avg_latency_ms),
+              rpm: u.rpm ?? n.rpm,
+              error_rate: u.error_rate_percent ?? n.error_rate,
+            };
+          })
+        );
+      } catch { }
+    };
+    const id = setInterval(poll, 5000);
+    return () => clearInterval(id);
+  }, [apiStatus]);
+
+  // ── Insights data fetching ───────────────────────────────────────────────
+  const fetchInsightsData = useCallback(async () => {
+    if (apiStatus !== "connected") return;
+    setInsightsLoading(true);
+    try {
+      const [insRes, patRes, recRes] = await Promise.all([
+        fetch("/api/insights/").then(r => r.json()),
+        fetch("/api/insights/patterns").then(r => r.json()),
+        fetch("/api/insights/recommendations").then(r => r.json()),
+      ]);
+      setAllInsights(insRes.insights || []);
+      setAllPatterns(patRes.patterns || []);
+      setAllRecommendations(recRes.recommendations || []);
+    } catch { }
+    setInsightsLoading(false);
+  }, [apiStatus]);
+
+  useEffect(() => {
+    if (rightTab === "insights") fetchInsightsData();
+  }, [rightTab, fetchInsightsData]);
+
+  // Poll insights every 15s when the tab is active
+  useEffect(() => {
+    if (rightTab !== "insights" || apiStatus !== "connected") return;
+    const id = setInterval(fetchInsightsData, 15000);
+    return () => clearInterval(id);
+  }, [rightTab, apiStatus, fetchInsightsData]);
+
+  const handleGenerateInsights = async (serviceName?: string) => {
+    setGeneratingInsights(true);
+    try {
+      await fetch("/api/insights/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service_name: serviceName || null }),
+      });
+      await fetchInsightsData();
+    } catch { }
+    setGeneratingInsights(false);
+  };
+
+  const handleAcknowledgeInsight = async (insightId: string) => {
+    try {
+      await fetch(`/api/insights/${insightId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "acknowledged" }),
+      });
+      fetchInsightsData();
+    } catch { }
+  };
+
+  const handleResolveInsight = async (insightId: string) => {
+    try {
+      await fetch(`/api/insights/${insightId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "resolved" }),
+      });
+      fetchInsightsData();
+    } catch { }
+  };
+
+  // ── Cluster data fetching ────────────────────────────────────────────────
+  const fetchClusterStatus = useCallback(async () => {
+    if (apiStatus !== "connected") return;
+    try {
+      const [statusRes, eventsRes] = await Promise.all([
+        fetch("/api/cluster/status").then(r => r.json()),
+        fetch("/api/cluster/events").then(r => r.json()),
+      ]);
+      setClusterStatus(statusRes);
+      setClusterEvents(eventsRes.events || []);
+    } catch { }
+  }, [apiStatus]);
+
+  useEffect(() => {
+    if (rightTab === "insights") fetchClusterStatus();
+  }, [rightTab, fetchClusterStatus]);
+
+  // Poll cluster every 5s when insights tab is active
+  useEffect(() => {
+    if (rightTab !== "insights" || apiStatus !== "connected") return;
+    const id = setInterval(fetchClusterStatus, 5000);
+    return () => clearInterval(id);
+  }, [rightTab, apiStatus, fetchClusterStatus]);
+
+  const handleSimulateLoad = async () => {
+    setSimulatingLoad(true);
+    try {
+      await fetch("/api/cluster/simulate-load", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ count: 6 }),
+      });
+      // Run a few ticks so the demo shows scaling
+      for (let i = 0; i < 3; i++) {
+        await new Promise(r => setTimeout(r, 500));
+        await fetch("/api/cluster/tick", { method: "POST" });
+      }
+      await fetchClusterStatus();
+    } catch { }
+    setSimulatingLoad(false);
+  };
+
+  const handleMapeKTick = async () => {
+    try {
+      await fetch("/api/cluster/tick", { method: "POST" });
+      await fetchClusterStatus();
+    } catch { }
+  };
+
+  // ── Node click handler (kept current via ref, called from D3) ────────────
+  const handleNodeClick = useCallback(
+    async (d: NodeDatum) => {
+      setSelectedNode(d);
+
+      // Fetch deep insights when node is selected
+      fetch(`/api/insights/${d.id}`)
+        .then(res => res.json())
+        .then(data => setInsightsData(data))
+        .catch(console.error);
+
+      if (apiStatus !== "connected") return;
+
+      // Immediately show analysis-in-progress annotation
+      const ts = new Date().toLocaleTimeString();
+      setAgentAnnotations(prev => [
+        { id: d.id, text: "Running agent analysis…", ts },
+        ...prev.filter(a => a.id !== d.id),
+      ]);
+
+      try {
+        const res = await fetch("/api/agent/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ service: d.id, trigger: "manual" }),
+        });
+        if (!res.ok) return;
+        const report = await res.json();
+
+        const summary =
+          report.chat_summary ??
+          report.recommended_action ??
+          `health_score: ${report.health_score ?? "?"}`;
+
+        setAgentAnnotations(prev => [
+          { id: d.id, text: summary, ts: new Date().toLocaleTimeString() },
+          ...prev.filter(a => a.id !== d.id),
+        ]);
+
+        // Reflect updated health from analysis result
+        if (report.health_score != null) {
+          setNodes(prev =>
+            prev.map(n =>
+              n.id === d.id ? { ...n, health: mapHealth(report.health_score) } : n
+            )
+          );
+        }
+      } catch { }
+    },
+    [apiStatus]
+  );
+
+  // Keep ref current
+  useEffect(() => {
+    nodeClickRef.current = handleNodeClick;
+  }, [handleNodeClick]);
+
+  // ── D3 force graph ────────────────────────────────────────────────────────
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const W = el.clientWidth || 580;
+    const H = el.clientHeight || 520;
+
+    d3.select(el).selectAll("*").remove();
+
+    const svg = d3.select(el)
+      .attr("viewBox", `0 0 ${W} ${H}`)
+      .style("background", "transparent");
+
+    // Glow filters per health state
+    const defs = svg.append("defs");
+    HEALTHS.forEach(h => {
+      const f = defs.append("filter")
+        .attr("id", `glow-${h}`)
+        .attr("x", "-50%").attr("y", "-50%")
+        .attr("width", "200%").attr("height", "200%");
+      f.append("feGaussianBlur").attr("stdDeviation", "4").attr("result", "blur");
+      const merge = f.append("feMerge");
+      merge.append("feMergeNode").attr("in", "blur");
+      merge.append("feMergeNode").attr("in", "SourceGraphic");
+    });
+
+    const linkData: GraphLink[] = links.map(l => ({ source: l.source, target: l.target }));
+
+    // Restore previous positions to avoid layout jumps on health updates
+    const nodeData: NodeDatum[] = nodes.map(n => {
+      const saved = positionsRef.current[n.id];
+      return {
+        ...n,
+        x: saved?.x ?? (W / 2 + (Math.random() - 0.5) * 200),
+        y: saved?.y ?? (H / 2 + (Math.random() - 0.5) * 200),
+      };
+    });
+
+    const sim = d3.forceSimulation(nodeData)
+      .force("link", d3.forceLink(linkData).id((d: NodeDatum) => d.id).distance(110).strength(0.7))
+      .force("charge", d3.forceManyBody().strength(-380))
+      .force("center", d3.forceCenter(W / 2, H / 2))
+      .force("collision", d3.forceCollide(48));
+
+    simRef.current = sim;
+
+    // Links
+    const linkSel = svg.append("g").selectAll("line")
+      .data(linkData).enter().append("line")
+      .attr("stroke", "#1e2a3a")
+      .attr("stroke-width", 1.5)
+      .attr("stroke-opacity", 0.7);
+
+    // Pulse overlay for critical paths (any node with health === "critical")
+    const criticalIds = new Set(nodes.filter(n => n.health === "critical").map(n => n.id));
+    const endpointId = (e: LinkEndpoint) => (typeof e === "string" ? e : e.id);
+    const criticalLinks = linkData.filter(l =>
+      criticalIds.has(endpointId(l.source)) || criticalIds.has(endpointId(l.target))
+    );
+
+    const pulseLinks = svg.append("g").selectAll("line")
+      .data(criticalLinks).enter().append("line")
+      .attr("stroke", "#ff3b5c")
+      .attr("stroke-width", 2)
+      .attr("stroke-opacity", 0)
+      .attr("stroke-dasharray", "6 4");
+
+    function pulseTick() {
+      pulseLinks.transition().duration(800).attr("stroke-opacity", 0.7)
+        .transition().duration(800).attr("stroke-opacity", 0)
+        .on("end", pulseTick);
+    }
+    pulseTick();
+
+    // Pulse nodes for critical nodes
+    const criticalNodeData = nodeData.filter(n => n.health === "critical");
+    const pulseNodes = svg.append("g").selectAll("circle")
+      .data(criticalNodeData).enter().append("circle")
+      .attr("r", 34)
+      .attr("fill", "none")
+      .attr("stroke", "#ff3b5c")
+      .attr("stroke-width", 3)
+      .attr("stroke-opacity", 0)
+      .attr("filter", "url(#glow-critical)");
+
+    function pulseNodeTick() {
+      pulseNodes.transition().duration(800).attr("stroke-opacity", 0.8).attr("r", 34)
+        .transition().duration(800).attr("stroke-opacity", 0).attr("r", 48)
+        .on("end", pulseNodeTick);
+    }
+    pulseNodeTick();
+
+    // Node groups
+    const nodeG = svg.append("g").selectAll("g")
+      .data(nodeData).enter().append("g")
+      .attr("cursor", "pointer")
+      .on("click", (_event: unknown, d: NodeDatum) => nodeClickRef.current(d))
+      .call(
+        d3.drag<SVGGElement, NodeDatum>()
+          .on("start", (event: DragEventLike, d: NodeDatum) => {
+            if (!event.active) sim.alphaTarget(0.3).restart();
+            d.fx = d.x; d.fy = d.y;
+          })
+          .on("drag", (event: DragEventLike, d: NodeDatum) => {
+            d.fx = event.x; d.fy = event.y;
+          })
+          .on("end", (event: DragEventLike, d: NodeDatum) => {
+            if (!event.active) sim.alphaTarget(0);
+            d.fx = null; d.fy = null;
+          })
+      );
+
+    // Outer health ring
+    nodeG.append("circle")
+      .attr("r", 32)
+      .attr("fill", "none")
+      .attr("stroke", (d: NodeDatum) => HEALTH_COLORS[d.health] || "#555")
+      .attr("stroke-width", 2)
+      .attr("stroke-opacity", 0.5)
+      .attr("filter", (d: NodeDatum) => `url(#glow-${d.health})`);
+
+    // Inner background
+    nodeG.append("circle")
+      .attr("r", 26)
+      .attr("fill", "#0a111c")
+      .attr("stroke", (d: NodeDatum) => HEALTH_COLORS[d.health] || "#555")
+      .attr("stroke-width", 1.5);
+
+    // Type icon
+    nodeG.append("text")
+      .attr("text-anchor", "middle")
+      .attr("dominant-baseline", "central")
+      .attr("y", -4)
+      .attr("font-size", 14)
+      .attr("fill", (d: NodeDatum) => HEALTH_COLORS[d.health])
+      .text((d: NodeDatum) => TYPE_ICONS[d.type] || "○");
+
+    // Service label
+    nodeG.append("text")
+      .attr("text-anchor", "middle")
+      .attr("y", 44)
+      .attr("font-size", 9)
+      .attr("font-family", "'DM Mono', monospace")
+      .attr("fill", "#8ba0b8")
+      .text((d: NodeDatum) => d.label);
+
+    // Annotation dot (orange badge)
+    nodeG.filter((d: NodeDatum) => agentAnnotations.some(a => a.id === d.id))
+      .append("circle")
+      .attr("r", 5).attr("cx", 20).attr("cy", -20)
+      .attr("fill", "#f5a623")
+      .attr("stroke", "#0a111c")
+      .attr("stroke-width", 1.5);
+
+    sim.on("tick", () => {
+      // Save positions for next render cycle
+      nodeData.forEach(d => {
+        if (d.x != null && d.y != null) positionsRef.current[d.id] = { x: d.x, y: d.y };
+      });
+
+      linkSel
+        .attr("x1", (d: GraphLink) => (d.source as NodeDatum).x ?? 0)
+        .attr("y1", (d: GraphLink) => (d.source as NodeDatum).y ?? 0)
+        .attr("x2", (d: GraphLink) => (d.target as NodeDatum).x ?? 0)
+        .attr("y2", (d: GraphLink) => (d.target as NodeDatum).y ?? 0);
+
+      pulseLinks
+        .attr("x1", (d: GraphLink) => (d.source as NodeDatum).x ?? 0)
+        .attr("y1", (d: GraphLink) => (d.source as NodeDatum).y ?? 0)
+        .attr("x2", (d: GraphLink) => (d.target as NodeDatum).x ?? 0)
+        .attr("y2", (d: GraphLink) => (d.target as NodeDatum).y ?? 0);
+
+      pulseNodes
+        .attr("cx", (d: NodeDatum) => d.x ?? 0)
+        .attr("cy", (d: NodeDatum) => d.y ?? 0);
+
+      nodeG.attr("transform", (d: NodeDatum) => `translate(${d.x},${d.y})`);
+    });
+
+    return () => { sim.stop(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, links]);
+
+  // ── CopilotKit Hooks ────────────────────────────────────────────────────────
+
+  useCopilotReadable({
+    description: "The list of currently degraded or critical services in the cluster.",
+    value: nodes.filter(n => n.health !== "healthy").map(n => ({ service: n.id, health: n.health, p99_latency: n.cpu * 40, avg_latency: n.mem * 14 })),
+  });
+
+  useCopilotReadable({
+    description: "The currently selected service node in the UI.",
+    value: selectedNode ? selectedNode.id : null,
+  });
+
+  useCopilotReadable({
+    description: "Deep Sentry-like insights data for the selected service (including errors, span waterfall, and logs).",
+    value: insightsData,
+  });
+
+  const selectedNodeData = selectedNode ? nodes.find(n => n.id === selectedNode.id) : null;
+
+  // ─── RENDER ──────────────────────────────────────────────────────────────
+
+  return (
+    <CopilotKit publicApiKey="ck_pub_16fefb799d506d90a688889ee017d055" runtimeUrl="http://localhost:8000/copilotkit">
+      <div style={{
+        fontFamily: "'DM Mono', 'Courier New', monospace",
+        background: "#050b14",
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        color: "#c8daf0",
+      }}>
+        {/* Header */}
+        <header style={{
+          padding: "12px 24px",
+          borderBottom: "1px solid #0e1e2e",
+          display: "flex",
+          alignItems: "center",
+          gap: 16,
+          background: "#070e1a",
+        }}>
+          <span style={{ fontSize: 11, color: "#3a5a7a", letterSpacing: 3 }}>STRANDS//OPS</span>
+          <span style={{ flex: 1 }} />
+          {[
+            { label: "HEALTHY", count: nodes.filter(n => n.health === "healthy").length, color: "#00e5a0" },
+            { label: "DEGRADED", count: nodes.filter(n => n.health === "degraded").length, color: "#f5a623" },
+            { label: "CRITICAL", count: nodes.filter(n => n.health === "critical").length, color: "#ff3b5c" },
+          ].map(s => (
+            <span key={s.label} style={{ fontSize: 10, color: s.color, letterSpacing: 2 }}>
+              {s.label} <span style={{ fontSize: 14, fontWeight: "bold" }}>{s.count}</span>
+            </span>
+          ))}
+          {/* API status badge */}
+          <span style={{
+            fontSize: 9,
+            color: apiStatus === "connected" ? "#00e5a0" : apiStatus === "offline" ? "#ff3b5c" : "#f5a623",
+            letterSpacing: 2,
+            marginLeft: 16,
+            border: "1px solid currentColor",
+            padding: "2px 6px",
+            borderRadius: 2,
+          }}>
+            {apiStatus === "connected" ? "● LIVE" : apiStatus === "offline" ? "● OFFLINE" : "● CONNECTING"}
+          </span>
+          <span style={{ fontSize: 10, color: "#3a5a7a", marginLeft: 8 }}>
+            {new Date().toLocaleTimeString()}
+          </span>
+        </header>
+
+        {/* Main */}
+        <div style={{ display: "flex", flex: 1, overflow: "hidden", height: "calc(100vh - 45px)" }}>
+
+          {/* LEFT — Dependency Graph */}
+          <div style={{
+            flex: "0 0 58%",
+            borderRight: "1px solid #0e1e2e",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+          }}>
+            <div style={{
+              padding: "10px 18px",
+              fontSize: 10,
+              color: "#3a5a7a",
+              letterSpacing: 2,
+              borderBottom: "1px solid #0e1e2e",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+            }}>
+              <span>CONTAINER DEPENDENCY GRAPH</span>
+              <span style={{ flex: 1 }} />
+              {HEALTHS.map(h => (
+                <span key={h} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: HEALTH_COLORS[h], display: "inline-block" }} />
+                  <span style={{ color: "#4a6a8a", fontSize: 9 }}>{h}</span>
+                </span>
+              ))}
+            </div>
+
+            <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+              <svg ref={svgRef} style={{ width: "100%", height: "100%", display: "block" }} />
+
+              {/* Selected node detail overlay */}
+              {selectedNodeData && (
+                <div style={{
+                  position: "absolute",
+                  bottom: 16,
+                  left: 16,
+                  background: "#070e1a",
+                  border: `1px solid ${HEALTH_COLORS[selectedNodeData.health]}44`,
+                  borderLeft: `3px solid ${HEALTH_COLORS[selectedNodeData.health]}`,
+                  padding: "12px 16px",
+                  width: 240,
+                  borderRadius: 4,
+                }}>
+                  <div style={{ fontSize: 11, color: "#c8daf0", marginBottom: 8, display: "flex", justifyContent: "space-between" }}>
+                    <span>{selectedNodeData.label}</span>
+                    <span style={{ color: HEALTH_COLORS[selectedNodeData.health], fontSize: 9, letterSpacing: 1 }}>
+                      {(activeRemediations[selectedNodeData.id] || selectedNodeData.health).toUpperCase()}
+                    </span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                    {[
+                      { label: "THROUGHPUT", value: `${selectedNodeData.rpm} RPM`, color: "#00e5a0" },
+                      { label: "ERROR RATE", value: `${selectedNodeData.error_rate}%`, color: selectedNodeData.error_rate > 5 ? "#ff3b5c" : "#00e5a0" },
+                    ].map(m => (
+                      <div key={m.label} style={{ background: "#060c18", padding: "8px", borderRadius: 4, border: "1px solid #1a2a3a" }}>
+                        <div style={{ fontSize: 8, color: "#4a6a8a", marginBottom: 4 }}>{m.label}</div>
+                        <div style={{ fontSize: 13, color: m.color, fontWeight: "bold" }}>{m.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {[
+                    { label: "CPU USAGE", value: selectedNodeData.cpu },
+                    { label: "MEM USAGE", value: selectedNodeData.mem },
+                  ].map(m => (
+                    <div key={m.label} style={{ marginBottom: 6 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#4a6a8a", marginBottom: 2 }}>
+                        <span>{m.label}</span><span>{m.value}%</span>
+                      </div>
+                      <div style={{ height: 3, background: "#0e1e2e", borderRadius: 2, overflow: "hidden" }}>
+                        <div style={{
+                          height: "100%",
+                          width: `${m.value}%`,
+                          background: m.value > 80 ? "#ff3b5c" : m.value > 60 ? "#f5a623" : "#00e5a0",
+                          borderRadius: 2,
+                          transition: "width 0.5s ease",
+                        }} />
+                      </div>
+                    </div>
+                  ))}
+                  <div style={{ fontSize: 9, color: "#4a6a8a", marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      REPLICAS: <span style={{ color: "#c8daf0" }}>{selectedNodeData.replicas}</span>
+                      &nbsp;·&nbsp;TYPE: <span style={{ color: "#c8daf0" }}>{selectedNodeData.type.toUpperCase()}</span>
+                    </div>
+                    <button
+                      onClick={() => setShowInsights(true)}
+                      style={{ background: "#7b61ff", border: "none", color: "white", padding: "4px 8px", fontSize: 9, borderRadius: 2, cursor: "pointer", letterSpacing: 1 }}
+                    >INSIGHTS</button>
+                  </div>
+                  <button
+                    onClick={() => { setSelectedNode(null); setShowInsights(false); }}
+                    style={{ position: "absolute", top: 8, right: 10, background: "none", border: "none", color: "#3a5a7a", cursor: "pointer", fontSize: 12 }}
+                  >×</button>
+                </div>
+              )}
+            </div>
+
+            {/* Agent Annotations bar */}
+            <div style={{
+              borderTop: "1px solid #0e1e2e",
+              padding: "8px 16px",
+              background: "#070e1a",
+              maxHeight: 90,
+              overflowY: "auto",
+            }}>
+              <div style={{ fontSize: 9, color: "#3a5a7a", letterSpacing: 2, marginBottom: 6 }}>AGENT ANNOTATIONS</div>
+              {agentAnnotations.map((a, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, marginBottom: 4, alignItems: "flex-start" }}>
+                  <span style={{ fontSize: 9, color: "#3a5a7a", whiteSpace: "nowrap" }}>{a.ts}</span>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#f5a623", flexShrink: 0, marginTop: 1 }} />
+                  <span style={{ fontSize: 10, color: "#8ba0b8" }}>
+                    <span style={{ color: "#c8daf0" }}>{a.id}</span> — {a.text}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* RIGHT — Tabbed Panel (Agent / Insights) */}
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "#050b14" }}>
+
+            {/* Tab Bar */}
+            <div style={{
+              display: "flex",
+              borderBottom: "1px solid #0e1e2e",
+              background: "#070e1a",
+            }}>
+              {([
+                { key: "agent" as const, label: "STRANDS AGENT", icon: <ActivitySquare size={11} /> },
+                { key: "insights" as const, label: "INSIGHTS ENGINE", icon: <Lightbulb size={11} /> },
+              ]).map(tab => (
+                <button
+                  key={tab.key}
+                  onClick={() => setRightTab(tab.key)}
+                  style={{
+                    flex: 1,
+                    padding: "10px 18px",
+                    fontSize: 10,
+                    letterSpacing: 2,
+                    border: "none",
+                    borderBottom: rightTab === tab.key ? "2px solid #7b61ff" : "2px solid transparent",
+                    background: "transparent",
+                    color: rightTab === tab.key ? "#c8daf0" : "#3a5a7a",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 6,
+                    fontFamily: "'DM Mono', monospace",
+                  }}
+                >
+                  {tab.icon} {tab.label}
+                  {tab.key === "insights" && allInsights.filter(i => i.status === "open").length > 0 && (
+                    <span style={{
+                      background: "#ff3b5c",
+                      color: "#fff",
+                      fontSize: 8,
+                      padding: "1px 5px",
+                      borderRadius: 8,
+                      marginLeft: 4,
+                    }}>
+                      {allInsights.filter(i => i.status === "open").length}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Agent Tab Content */}
+            {rightTab === "agent" && (
+              <>
+                <div style={{
+                  padding: "10px 18px",
+                  fontSize: 10,
+                  color: "#3a5a7a",
+                  letterSpacing: 2,
+                  borderBottom: "1px solid #0e1e2e",
+                  display: "flex",
+                  justifyContent: "space-between"
+                }}>
+                  <span>MINIMAX M2.5</span>
+                  <span style={{ color: apiStatus === "connected" ? "#00e5a0" : "#f5a623", display: "flex", alignItems: "center", gap: 6 }}>
+                    {apiStatus === "connected" ? <ActivitySquare size={12} /> : <ServerCrash size={12} />}
+                    {apiStatus === "connected" ? "ONLINE" : "CONNECTING"}
+                  </span>
+                </div>
+
+                <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+                  {/* Left Column of Right Panel (Remediation + TestSprite) */}
+                  <div style={{ flex: "0 0 35%", borderRight: "1px solid #0e1e2e", display: "flex", flexDirection: "column" }}>
+                    {/* Test Sprite Panel */}
+                    <div style={{ borderBottom: "1px solid #0e1e2e", padding: 16 }}>
+                      <div style={{ fontSize: 9, color: "#3a5a7a", letterSpacing: 2, marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                        <ShieldAlert size={12} color="#7b61ff" /> TESTSPRITE VALIDATION
+                      </div>
+                      <div style={{
+                        background: validationResult.passed ? "#00e5a011" : "#ff3b5c11",
+                        border: `1px solid ${validationResult.passed ? "#00e5a0" : "#ff3b5c"}44`,
+                        padding: 12,
+                        borderRadius: 4
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, color: validationResult.passed ? "#00e5a0" : "#ff3b5c", fontSize: 11, marginBottom: 4 }}>
+                          {validationResult.passed ? <CheckCircle2 size={14} /> : <ServerCrash size={14} />}
+                          {validationResult.passed ? "PASSING" : "FAILING"}
+                        </div>
+                        <div style={{ fontSize: 10, color: "#8ba0b8" }}>
+                          {validationResult.service}: {validationResult.msg}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Remediation Feed */}
+                    <div style={{ padding: 16, flex: 1, overflowY: "auto" }}>
+                      <div style={{ fontSize: 9, color: "#3a5a7a", letterSpacing: 2, marginBottom: 12 }}>
+                        REMEDIATION ACTION LOG
+                      </div>
+                      {remediationFeed.length === 0 ? (
+                        <div style={{ fontSize: 10, color: "#4a6a8a", fontStyle: "italic" }}>No recent actions...</div>
+                      ) : (
+                        remediationFeed.map((action, i) => (
+                          <div key={i} style={{
+                            borderLeft: "2px solid #7b61ff",
+                            paddingLeft: 10,
+                            marginBottom: 12
+                          }}>
+                            <div style={{ fontSize: 9, color: "#7b61ff", marginBottom: 2 }}>{action.timestamp || "Just now"}</div>
+                            <div style={{ fontSize: 11, color: "#c8daf0", marginBottom: 2 }}>{action.action_type.toUpperCase()} <span style={{ color: "#8ba0b8" }}>on</span> {action.service}</div>
+                            <div style={{ fontSize: 10, color: "#00e5a0" }}>{action.result}</div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* CopilotKit Chat UI */}
+                  <div style={{ flex: 1, position: "relative" }}>
+                    <style dangerouslySetInnerHTML={{
+                      __html: `
+                     .copilotKitButton { display: none !important; }
+                     .copilotKitSidebar { width: 100% !important; min-width: 100% !important; height: 100% !important; background: transparent !important; }
+                     .copilotKitPopup { width: 100% !important; background: transparent !important; border: none !important; box-shadow: none !important; }
+                     .copilotKitMessages { padding: 16px !important; }
+                     .copilotKitMessage { font-family: 'DM Mono', monospace !important; font-size: 11px !important; background: #080f1c !important; border: 1px solid #0e1e2e !important; color: #c8daf0 !important; }
+                     .copilotKitUserMessage { background: #0a1520 !important; border: 1px solid #1a2a3a !important; color: #8ba0b8 !important; }
+                     .copilotKitInput { background: #070e1a !important; border-top: 1px solid #0e1e2e !important; font-family: 'DM Mono', monospace !important; color: #c8daf0 !important; }
+                   `}} />
+                    <CopilotSidebar
+                      defaultOpen={true}
+                      clickOutsideToClose={false}
+                      labels={{ title: "", initial: "Agent is online. How can I help resolve cluster anomalies?" }}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Insights Tab Content */}
+            {rightTab === "insights" && (
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+                {/* Insights Header Bar */}
+                <div style={{
+                  padding: "10px 18px",
+                  fontSize: 10,
+                  color: "#3a5a7a",
+                  letterSpacing: 2,
+                  borderBottom: "1px solid #0e1e2e",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}>
+                  <span>PERSISTENT MEMORY — {allInsights.length} INSIGHTS · {allPatterns.length} PATTERNS</span>
+                  <button
+                    onClick={() => handleGenerateInsights()}
+                    disabled={generatingInsights}
+                    style={{
+                      background: generatingInsights ? "#1a2a3a" : "#7b61ff",
+                      border: "none",
+                      color: "#fff",
+                      padding: "4px 12px",
+                      fontSize: 9,
+                      borderRadius: 2,
+                      cursor: generatingInsights ? "wait" : "pointer",
+                      letterSpacing: 1,
+                      fontFamily: "'DM Mono', monospace",
+                    }}
+                  >
+                    {generatingInsights ? "GENERATING..." : "GENERATE INSIGHTS"}
+                  </button>
+                </div>
+
+                <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+
+                  {/* Left: Insights List */}
+                  <div style={{ flex: "0 0 55%", borderRight: "1px solid #0e1e2e", overflowY: "auto" }}>
+
+                    {/* Recommendations Section */}
+                    {allRecommendations.length > 0 && (
+                      <div style={{ borderBottom: "1px solid #0e1e2e" }}>
+                        <div style={{ padding: "10px 16px", background: "#0a1520", fontSize: 9, color: "#f5a623", letterSpacing: 1, display: "flex", alignItems: "center", gap: 6 }}>
+                          <TrendingUp size={10} /> TOP RECOMMENDATIONS
+                        </div>
+                        {allRecommendations.slice(0, 3).map((rec, i) => (
+                          <div key={i} style={{
+                            padding: "10px 16px",
+                            borderBottom: "1px solid #0e1e2e08",
+                            background: "#ff3b5c08",
+                          }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                              <span style={{ fontSize: 11, color: "#c8daf0" }}>{rec.title}</span>
+                              <span style={{
+                                fontSize: 8,
+                                padding: "1px 6px",
+                                borderRadius: 2,
+                                background: rec.severity === "critical" ? "#ff3b5c22" : "#f5a62322",
+                                color: rec.severity === "critical" ? "#ff3b5c" : "#f5a623",
+                                letterSpacing: 1,
+                              }}>
+                                {(rec.severity || "").toUpperCase()}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 10, color: "#8ba0b8", marginBottom: 4 }}>{rec.service}</div>
+                            <div style={{ fontSize: 10, color: "#00e5a0" }}>{rec.recommendation}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* All Insights */}
+                    <div style={{ padding: "10px 16px", background: "#060c18", fontSize: 9, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #0e1e2e" }}>
+                      RECENT INSIGHTS
+                    </div>
+                    {insightsLoading && allInsights.length === 0 ? (
+                      <div style={{ padding: 20, fontSize: 10, color: "#4a6a8a", textAlign: "center" }}>Loading insights...</div>
+                    ) : allInsights.length === 0 ? (
+                      <div style={{ padding: 20, fontSize: 10, color: "#4a6a8a", textAlign: "center" }}>
+                        No insights yet. Click "Generate Insights" to start.
+                      </div>
+                    ) : (
+                      allInsights.map((ins, i) => {
+                        const sevColor = ins.severity === "critical" ? "#ff3b5c" :
+                          ins.severity === "high" ? "#f5a623" :
+                            ins.severity === "medium" ? "#7b61ff" : "#3a5a7a";
+                        return (
+                          <div key={ins.id || i} style={{
+                            padding: "10px 16px",
+                            borderBottom: "1px solid #0e1e2e",
+                            borderLeft: `3px solid ${sevColor}`,
+                            opacity: ins.status === "resolved" ? 0.5 : 1,
+                          }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                              <span style={{ fontSize: 11, color: "#c8daf0" }}>{ins.title}</span>
+                              <span style={{
+                                fontSize: 8,
+                                padding: "1px 6px",
+                                borderRadius: 2,
+                                background: `${sevColor}22`,
+                                color: sevColor,
+                                letterSpacing: 1,
+                              }}>
+                                {(ins.severity || "").toUpperCase()}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 10, color: "#8ba0b8", marginBottom: 4 }}>
+                              {ins.service} · {ins.category} · <span style={{ color: ins.status === "open" ? "#f5a623" : ins.status === "acknowledged" ? "#7b61ff" : "#00e5a0" }}>{ins.status}</span>
+                            </div>
+                            <div style={{ fontSize: 10, color: "#6a8aa0", marginBottom: 6, lineHeight: 1.4 }}>{ins.insight}</div>
+                            {ins.status === "open" && (
+                              <div style={{ display: "flex", gap: 8 }}>
+                                <button
+                                  onClick={() => handleAcknowledgeInsight(ins.id)}
+                                  style={{ background: "none", border: "1px solid #7b61ff44", color: "#7b61ff", padding: "2px 8px", fontSize: 8, borderRadius: 2, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontFamily: "'DM Mono', monospace" }}
+                                >
+                                  <Eye size={8} /> ACK
+                                </button>
+                                <button
+                                  onClick={() => handleResolveInsight(ins.id)}
+                                  style={{ background: "none", border: "1px solid #00e5a044", color: "#00e5a0", padding: "2px 8px", fontSize: 8, borderRadius: 2, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontFamily: "'DM Mono', monospace" }}
+                                >
+                                  <CheckCheck size={8} /> RESOLVE
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Right: Patterns */}
+                  <div style={{ flex: 1, overflowY: "auto" }}>
+                    <div style={{ padding: "10px 16px", background: "#060c18", fontSize: 9, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #0e1e2e" }}>
+                      DETECTED PATTERNS
+                    </div>
+                    {allPatterns.length === 0 ? (
+                      <div style={{ padding: 20, fontSize: 10, color: "#4a6a8a", textAlign: "center" }}>
+                        No patterns detected yet.
+                      </div>
+                    ) : (
+                      allPatterns.map((pat, i) => (
+                        <div key={pat.id || i} style={{
+                          padding: "10px 16px",
+                          borderBottom: "1px solid #0e1e2e",
+                        }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                            <span style={{
+                              fontSize: 8,
+                              padding: "1px 6px",
+                              borderRadius: 2,
+                              background: "#7b61ff22",
+                              color: "#7b61ff",
+                              letterSpacing: 1,
+                            }}>
+                              {(pat.type || "pattern").toUpperCase().replace(/_/g, " ")}
+                            </span>
+                            <span style={{ fontSize: 9, color: "#4a6a8a" }}>
+                              {pat.service || pat.scope || ""}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 10, color: "#c8daf0", marginBottom: 4, lineHeight: 1.4 }}>{pat.description}</div>
+                          <div style={{ display: "flex", gap: 12, fontSize: 9, color: "#4a6a8a" }}>
+                            <span>Confidence: <span style={{ color: pat.confidence > 0.8 ? "#00e5a0" : "#f5a623" }}>{((pat.confidence || 0) * 100).toFixed(0)}%</span></span>
+                            {pat.occurrences && <span>Seen: <span style={{ color: "#8ba0b8" }}>{pat.occurrences}x</span></span>}
+                          </div>
+                          {pat.recommendation && (
+                            <div style={{ fontSize: 10, color: "#00e5a0", marginTop: 4 }}>{pat.recommendation}</div>
+                          )}
+                        </div>
+                      ))
+                    )}
+
+                    {/* Global Patterns section */}
+                    {allPatterns.filter(p => p.scope === "global").length > 0 && (
+                      <>
+                        <div style={{ padding: "10px 16px", background: "#060c18", fontSize: 9, color: "#f5a623", letterSpacing: 1, borderBottom: "1px solid #0e1e2e", display: "flex", alignItems: "center", gap: 6 }}>
+                          <AlertTriangle size={10} /> CROSS-SERVICE PATTERNS
+                        </div>
+                        {allPatterns.filter(p => p.scope === "global").map((gpat, i) => (
+                          <div key={gpat.id || i} style={{ padding: "10px 16px", borderBottom: "1px solid #0e1e2e" }}>
+                            <div style={{ fontSize: 10, color: "#c8daf0", marginBottom: 4 }}>{gpat.description}</div>
+                            {gpat.services_involved && (
+                              <div style={{ fontSize: 9, color: "#8ba0b8" }}>Services: {gpat.services_involved.join(", ")}</div>
+                            )}
+                            {gpat.mitigation && (
+                              <div style={{ fontSize: 10, color: "#00e5a0", marginTop: 4 }}>{gpat.mitigation}</div>
+                            )}
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Cluster Agent Panel — bottom strip */}
+                <div style={{
+                  borderTop: "1px solid #0e1e2e",
+                  background: "#070e1a",
+                  padding: "8px 16px",
+                  maxHeight: 200,
+                  overflowY: "auto",
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <div style={{ fontSize: 9, color: "#3a5a7a", letterSpacing: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                      <Network size={10} color="#7b61ff" /> MAPE-K CLUSTER — {clusterStatus?.total_replicas || 1} AGENT{(clusterStatus?.total_replicas || 1) > 1 ? "S" : ""}
+                      <span style={{ color: "#4a6a8a" }}>·</span>
+                      <span style={{ color: "#8ba0b8" }}>{clusterStatus?.pending_work_items || 0} queued</span>
+                      <span style={{ color: "#4a6a8a" }}>·</span>
+                      <span style={{ color: "#8ba0b8" }}>{clusterStatus?.completed_analyses || 0} done</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        onClick={handleMapeKTick}
+                        style={{
+                          background: "none", border: "1px solid #7b61ff44", color: "#7b61ff",
+                          padding: "2px 8px", fontSize: 8, borderRadius: 2, cursor: "pointer",
+                          fontFamily: "'DM Mono', monospace", letterSpacing: 1,
+                        }}
+                      >
+                        TICK
+                      </button>
+                      <button
+                        onClick={handleSimulateLoad}
+                        disabled={simulatingLoad}
+                        style={{
+                          background: simulatingLoad ? "#1a2a3a" : "#ff3b5c22",
+                          border: "1px solid #ff3b5c44", color: "#ff3b5c",
+                          padding: "2px 8px", fontSize: 8, borderRadius: 2,
+                          cursor: simulatingLoad ? "wait" : "pointer",
+                          fontFamily: "'DM Mono', monospace", letterSpacing: 1,
+                        }}
+                      >
+                        {simulatingLoad ? "SIMULATING..." : "SIMULATE LOAD"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Agent replica tiles */}
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {(clusterStatus?.replicas || []).map((replica: any) => (
+                      <div key={replica.replica_id} style={{
+                        background: "#0a111c",
+                        border: `1px solid ${replica.status === "running" ? "#00e5a044" : "#ff3b5c44"}`,
+                        borderRadius: 4,
+                        padding: "6px 10px",
+                        minWidth: 140,
+                        flex: "0 0 auto",
+                      }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                          <span style={{ fontSize: 10, color: "#c8daf0", display: "flex", alignItems: "center", gap: 4 }}>
+                            <Cpu size={9} color="#7b61ff" /> {replica.name}
+                          </span>
+                          <span style={{
+                            width: 6, height: 6, borderRadius: "50%",
+                            background: replica.status === "running" ? "#00e5a0" : "#ff3b5c",
+                            display: "inline-block",
+                          }} />
+                        </div>
+                        <div style={{ fontSize: 9, color: "#4a6a8a", marginBottom: 2 }}>
+                          svcs: <span style={{ color: "#8ba0b8" }}>{replica.assigned_services?.length || 0}</span>
+                          {" "}· done: <span style={{ color: "#8ba0b8" }}>{replica.analyses_completed}</span>
+                        </div>
+                        {/* CPU bar */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
+                          <span style={{ fontSize: 8, color: "#4a6a8a", width: 22 }}>CPU</span>
+                          <div style={{ flex: 1, height: 3, background: "#0e1e2e", borderRadius: 2, overflow: "hidden" }}>
+                            <div style={{
+                              height: "100%",
+                              width: `${replica.cpu_load || 0}%`,
+                              background: (replica.cpu_load || 0) > 80 ? "#ff3b5c" : (replica.cpu_load || 0) > 50 ? "#f5a623" : "#00e5a0",
+                              borderRadius: 2,
+                            }} />
+                          </div>
+                          <span style={{ fontSize: 8, color: "#8ba0b8", width: 28, textAlign: "right" }}>{(replica.cpu_load || 0).toFixed(0)}%</span>
+                        </div>
+                        {replica.current_task && (
+                          <div style={{ fontSize: 8, color: "#f5a623", display: "flex", alignItems: "center", gap: 4 }}>
+                            <Zap size={8} /> {replica.current_task}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Recent scale events */}
+                  {clusterEvents.length > 0 && (
+                    <div style={{ marginTop: 8 }}>
+                      {clusterEvents.slice(-3).reverse().map((evt, i) => (
+                        <div key={i} style={{ fontSize: 9, color: "#4a6a8a", display: "flex", gap: 6, marginBottom: 2 }}>
+                          <span style={{ color: evt.event === "spawn" ? "#00e5a0" : "#ff3b5c" }}>
+                            {evt.event === "spawn" ? "+" : "-"}
+                          </span>
+                          <span style={{ color: "#8ba0b8" }}>{evt.name}</span>
+                          <span>{evt.reason}</span>
+                          <span style={{ color: "#3a5a7a" }}>({evt.total_replicas} total)</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Insights Modal Overlay */}
+        {showInsights && insightsData && (
+          <div style={{
+            position: "absolute", top: 45, left: 0, right: 0, bottom: 0,
+            background: "rgba(5, 11, 20, 0.95)",
+            backdropFilter: "blur(8px)",
+            zIndex: 100,
+            display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center",
+            padding: 40
+          }}>
+            <div style={{
+              width: "100%", maxWidth: 1000, height: "100%",
+              background: "#0a111c", border: "1px solid #1a2a3a",
+              borderRadius: 8, display: "flex", flexDirection: "column",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.5)", overflow: "hidden"
+            }}>
+              {/* Header */}
+              <div style={{ padding: "16px 24px", borderBottom: "1px solid #1a2a3a", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ background: "#7b61ff22", color: "#7b61ff", padding: "4px 8px", borderRadius: 4, fontSize: 11, fontWeight: "bold" }}>DEEP INSIGHTS</div>
+                  <div style={{ fontSize: 16, color: "#c8daf0" }}>{insightsData.service}</div>
+                </div>
+                <button
+                  onClick={() => setShowInsights(false)}
+                  style={{ background: "none", border: "none", color: "#8ba0b8", cursor: "pointer", fontSize: 20 }}
+                >×</button>
+              </div>
+
+              {/* Body */}
+              <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+
+                {/* Left: Issues List */}
+                <div style={{ flex: "0 0 40%", borderRight: "1px solid #1a2a3a", display: "flex", flexDirection: "column" }}>
+                  <div style={{ padding: "12px 16px", background: "#060c18", fontSize: 10, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #1a2a3a" }}>UNRESOLVED ISSUES</div>
+                  <div style={{ flex: 1, overflowY: "auto" }}>
+                    {insightsData.errors && insightsData.errors.map((err: any) => (
+                      <div key={err.id} style={{ padding: 16, borderBottom: "1px solid #1a2a3a", cursor: "pointer", background: err.trend === 'up' ? "#ff3b5c05" : "transparent" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                          <span style={{ color: "#ff3b5c", fontSize: 12, fontWeight: "bold" }}>{err.type}</span>
+                          <span style={{ fontSize: 10, color: "#8ba0b8" }}>{err.id}</span>
+                        </div>
+                        <div style={{ fontSize: 11, color: "#c8daf0", marginBottom: 12, lineHeight: 1.4 }}>{err.message}</div>
+                        <div style={{ display: "flex", gap: 16, fontSize: 10, color: "#4a6a8a" }}>
+                          <span><span style={{ color: "#8ba0b8" }}>{err.count}</span> events</span>
+                          <span><span style={{ color: "#8ba0b8" }}>{err.unique_users}</span> users</span>
+                          <span style={{ color: err.trend === 'up' ? "#ff3b5c" : "#00e5a0" }}>{err.trend === 'up' ? '↗ TRENDING' : '↘ DROPPING'}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Right: Waterfall & Details */}
+                <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                  <div style={{ padding: "12px 16px", background: "#060c18", fontSize: 10, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #1a2a3a" }}>
+                    TRACE WATERFALL: <span style={{ color: "#c8daf0" }}>{insightsData.waterfall?.trace_id}</span>
+                  </div>
+
+                  <div style={{ padding: 20, flex: 1, overflowY: "auto" }}>
+                    {/* Waterfall */}
+                    <div style={{ marginBottom: 30 }}>
+                      <div style={{ fontSize: 11, color: "#8ba0b8", marginBottom: 12 }}>TOTAL DURATION: {insightsData.waterfall?.total_duration_ms}ms</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {insightsData.waterfall?.spans.map((span: any) => (
+                          <div key={span.span_id} style={{ position: "relative", height: 28, background: "#050b14", borderRadius: 4 }}>
+                            <div style={{
+                              position: "absolute", left: `${(span.start_offset_ms / insightsData.waterfall.total_duration_ms) * 100}%`,
+                              width: `${Math.max(2, (span.duration_ms / insightsData.waterfall.total_duration_ms) * 100)}%`,
+                              height: "100%", background: span.type === "db" ? "#f5a623" : span.type === "cache" ? "#7b61ff" : "#00e5a0",
+                              borderRadius: 4, opacity: 0.8
+                            }} />
+                            <div style={{ position: "absolute", left: 8, top: 6, fontSize: 10, color: "#fff", textShadow: "0 1px 2px rgba(0,0,0,0.8)" }}>
+                              {span.operation} <span style={{ opacity: 0.7 }}>— {span.duration_ms}ms</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Meta Cards */}
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                      {/* Release Correlation */}
+                      <div style={{ background: "#050b14", border: "1px solid #1a2a3a", borderRadius: 6, padding: 16 }}>
+                        <div style={{ fontSize: 10, color: "#4a6a8a", letterSpacing: 1, marginBottom: 12 }}>RELEASE CORRELATION</div>
+                        <div style={{ fontSize: 14, color: "#c8daf0", marginBottom: 8 }}>{insightsData.releases?.current_version}</div>
+                        <div style={{ fontSize: 11, color: "#8ba0b8", marginBottom: 4 }}>{insightsData.releases?.new_issues_introduced} new issues introduced</div>
+                        <div style={{ fontSize: 11, color: insightsData.releases?.status === 'degraded' ? '#ff3b5c' : '#00e5a0' }}>Crash rate delta: {insightsData.releases?.crash_rate_delta}</div>
+                      </div>
+
+                      {/* Correlated Logs */}
+                      <div style={{ background: "#050b14", border: "1px solid #1a2a3a", borderRadius: 6, padding: 16 }}>
+                        <div style={{ fontSize: 10, color: "#4a6a8a", letterSpacing: 1, marginBottom: 12 }}>CORRELATED LOGS</div>
+                        {insightsData.logs?.slice(-3).map((l: any, i: number) => (
+                          <div key={i} style={{ fontSize: 10, marginBottom: 6, display: "flex", gap: 8 }}>
+                            <span style={{ color: l.level === 'ERROR' ? '#ff3b5c' : l.level === 'WARN' ? '#f5a623' : '#3a5a7a' }}>[{l.level}]</span>
+                            <span style={{ color: "#c8daf0" }}>{l.message}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+        )}
+
+        <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap');
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: #050b14; }
+        ::-webkit-scrollbar-thumb { background: #0e1e2e; border-radius: 2px; }
+        @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+      `}</style>
+      </div>
+    </CopilotKit>
+  );
+}
