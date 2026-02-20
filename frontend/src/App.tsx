@@ -822,7 +822,7 @@ export default function DeployOpsCenter() {
 
   return (
     <CopilotErrorBoundary>
-      <CopilotKit runtimeUrl="http://localhost:8000/copilotkit">
+      <CopilotKit runtimeUrl="http://localhost:8000/copilotkit" agent="default">
         <div style={{
           fontFamily: "'DM Mono', 'Courier New', monospace",
           background: "#050b14",

@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-02-20T22:54:03.047585+00:00",
+  "last_updated": "2026-02-20T23:01:20.708947+00:00",
   "services": {
     "checkout-service": {
       "baseline_metrics": {
@@ -961,6 +961,17 @@
           "id": "ins-ca331519",
           "timestamp": "2026-02-20T22:21:40.596569+00:00",
           "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Redis Monitoring Gap",
+          "insight": "Redis monitoring is not reporting data, creating a blind spot in cache performance and reliability monitoring.",
+          "evidence": "{\"monitor_status\": \"No Data\", \"monitor_name\": \"[Redis] High memory consumption\"}",
+          "recommendation": "1. Verify Redis agent configuration\n2. Check connectivity between Datadog agent and Redis\n3. Validate Redis metrics collection permissions\n4. Review agent logs for potential collection errors",
+          "id": "ins-15b6d167",
+          "timestamp": "2026-02-20T23:01:14.741519+00:00",
+          "status": "open"
         }
       ]
     },
@@ -1088,6 +1099,17 @@
           "id": "ins-43dc3083",
           "timestamp": "2026-02-20T22:49:00.789677+00:00",
           "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "low",
+          "title": "Container CPU Throttling Detected",
+          "insight": "CPU throttling detected in containers, indicating potential resource constraints that could impact service performance.",
+          "evidence": "{\"cpu_throttled\": 2541820.627, \"cpu_limit\": 3758845637.5839}",
+          "recommendation": "1. Monitor CPU throttling trends over time\n2. If trend continues, consider increasing CPU limits\n3. Review workload patterns to identify optimization opportunities\n4. Consider workload distribution across nodes",
+          "id": "ins-52f8ee9d",
+          "timestamp": "2026-02-20T23:01:20.708932+00:00",
+          "status": "open"
         }
       ]
     },
@@ -1104,6 +1126,28 @@
           "recommendation": "1. Check Sidekiq error logs for specific job failures\n2. Verify Redis connectivity since Redis monitoring is down\n3. Review recent code deployments that might have affected background jobs",
           "id": "ins-46c6063d",
           "timestamp": "2026-02-20T22:36:30.837158+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "High Error Rate in Sidekiq Job Processing",
+          "insight": "Sidekiq job processing is experiencing elevated error rates. This could impact background task processing across the platform. Additionally, Redis monitoring is in a No Data state, which may be related as Sidekiq depends on Redis.",
+          "evidence": "{\"alerts\": [\"[operation:sidekiq.job] High Error Rate\", \"[Redis] High memory consumption - No Data\"], \"system_load\": \"elevated\", \"redis_state\": \"monitoring gap\"}",
+          "recommendation": "1. Check Sidekiq logs for error patterns\n2. Verify Redis connectivity and health\n3. Review recent changes to background job processing\n4. Consider scaling up Sidekiq workers if backlog exists",
+          "id": "ins-d333c784",
+          "timestamp": "2026-02-20T23:00:54.192444+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "High Sidekiq Job Error Rate",
+          "insight": "Sidekiq job processing is experiencing elevated error rates, potentially affecting background task processing reliability.",
+          "evidence": "{\"monitor_status\": \"Alert\", \"monitor_name\": \"[operation:sidekiq.job] High Error Rate on {{service.name}}\"}",
+          "recommendation": "1. Review Sidekiq job logs for error patterns\n2. Check dependent service health\n3. Implement automatic retry policies for failed jobs\n4. Consider circuit breakers for external service calls",
+          "id": "ins-1d3c543b",
+          "timestamp": "2026-02-20T23:01:09.042326+00:00",
           "status": "open"
         }
       ]
