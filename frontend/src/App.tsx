@@ -198,11 +198,24 @@ export default function DeployOpsCenter() {
 
   // Agent live activity feed
   const [agentActivity, setAgentActivity] = useState<any[]>([]);
-  const [activitySinceId, setActivitySinceId] = useState(0);
+  // Tracked via ref so the polling useEffect doesn't re-mount on every new activity
+  const activitySinceIdRef = useRef(0);
 
   // Ref so D3 click handlers always call the latest version of handleNodeClick
   // without stale closures from the useEffect capture.
   const nodeClickRef = useRef<(d: NodeDatum) => void>(() => { });
+
+  // In-flight guards — prevent overlapping concurrent fetches
+  const insightsFetchingRef = useRef(false);
+  const clusterFetchingRef = useRef(false);
+
+  // Page-visibility — pause all polling when the browser tab is hidden
+  const isPageVisibleRef = useRef(true);
+  useEffect(() => {
+    const onVisibility = () => { isPageVisibleRef.current = !document.hidden; };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
 
   // ── Initial graph load ────────────────────────────────────────────────────
   useEffect(() => {
@@ -271,9 +284,10 @@ export default function DeployOpsCenter() {
   useEffect(() => {
     if (apiStatus !== "connected") return;
     const poll = async () => {
+      if (!isPageVisibleRef.current) return;
       try {
         const res = await fetch("/api/agent/health");
-        if (!res.ok) return;
+        if (!res.ok) { console.warn("[health] poll failed:", res.status); return; }
         const data = await res.json();
         setNodes(prev =>
           prev.map(n => {
@@ -289,7 +303,9 @@ export default function DeployOpsCenter() {
             };
           })
         );
-      } catch { }
+      } catch (err) {
+        console.warn("[health] poll error:", err);
+      }
     };
     const id = setInterval(poll, 5000);
     return () => clearInterval(id);
@@ -297,19 +313,26 @@ export default function DeployOpsCenter() {
 
   // ── Insights data fetching ───────────────────────────────────────────────
   const fetchInsightsData = useCallback(async () => {
-    if (apiStatus !== "connected") return;
+    if (apiStatus !== "connected" || insightsFetchingRef.current || !isPageVisibleRef.current) return;
+    insightsFetchingRef.current = true;
     setInsightsLoading(true);
     try {
-      const [insRes, patRes, recRes] = await Promise.all([
-        fetch("/api/insights/").then(r => r.json()),
-        fetch("/api/insights/patterns").then(r => r.json()),
-        fetch("/api/insights/recommendations").then(r => r.json()),
+      // allSettled so one slow/failing endpoint doesn't drop the others
+      const [insRes, patRes, recRes] = await Promise.allSettled([
+        fetch("/api/insights/").then(r => { if (!r.ok) throw new Error(`insights ${r.status}`); return r.json(); }),
+        fetch("/api/insights/patterns").then(r => { if (!r.ok) throw new Error(`patterns ${r.status}`); return r.json(); }),
+        fetch("/api/insights/recommendations").then(r => { if (!r.ok) throw new Error(`recs ${r.status}`); return r.json(); }),
       ]);
-      setAllInsights(insRes.insights || []);
-      setAllPatterns(patRes.patterns || []);
-      setAllRecommendations(recRes.recommendations || []);
-    } catch { }
-    setInsightsLoading(false);
+      if (insRes.status === "fulfilled") setAllInsights(insRes.value.insights || []);
+      else console.warn("[insights] fetch failed:", insRes.reason);
+      if (patRes.status === "fulfilled") setAllPatterns(patRes.value.patterns || []);
+      else console.warn("[patterns] fetch failed:", patRes.reason);
+      if (recRes.status === "fulfilled") setAllRecommendations(recRes.value.recommendations || []);
+      else console.warn("[recommendations] fetch failed:", recRes.reason);
+    } finally {
+      insightsFetchingRef.current = false;
+      setInsightsLoading(false);
+    }
   }, [apiStatus]);
 
   useEffect(() => {
@@ -324,11 +347,14 @@ export default function DeployOpsCenter() {
   }, [rightTab, apiStatus, fetchInsightsData]);
 
   // Poll agent activity feed every 3s on agent tab
+  // activitySinceIdRef is a ref — not in deps — so the interval never restarts on new activity
   useEffect(() => {
     if (rightTab !== "agent" || apiStatus !== "connected") return;
     const fetchActivity = async () => {
+      if (!isPageVisibleRef.current) return;
       try {
-        const res = await fetch(`/api/agent/activity?since_id=${activitySinceId}&limit=30`);
+        const res = await fetch(`/api/agent/activity?since_id=${activitySinceIdRef.current}&limit=30`);
+        if (!res.ok) { console.warn("[activity] fetch failed:", res.status); return; }
         const data = await res.json();
         if (data.activity && data.activity.length > 0) {
           setAgentActivity((prev: any[]) => {
@@ -340,14 +366,22 @@ export default function DeployOpsCenter() {
               return true;
             }).slice(0, 50);
           });
-          setActivitySinceId(Math.max(...data.activity.map((a: any) => a.id)));
+          // Safe id extraction — filter out undefined/non-numeric ids before Math.max
+          const validIds: number[] = data.activity
+            .map((a: any) => a.id)
+            .filter((id: any) => typeof id === "number" && !isNaN(id));
+          if (validIds.length > 0) {
+            activitySinceIdRef.current = Math.max(...validIds);
+          }
         }
-      } catch { }
+      } catch (err) {
+        console.warn("[activity] fetch error:", err);
+      }
     };
     fetchActivity();
     const id = setInterval(fetchActivity, 3000);
     return () => clearInterval(id);
-  }, [rightTab, apiStatus, activitySinceId]);
+  }, [rightTab, apiStatus]); // activitySinceIdRef intentionally excluded — it's a ref
 
   const handleGenerateInsights = async (serviceName?: string) => {
     setGeneratingInsights(true);
@@ -386,15 +420,20 @@ export default function DeployOpsCenter() {
 
   // ── Cluster data fetching ────────────────────────────────────────────────
   const fetchClusterStatus = useCallback(async () => {
-    if (apiStatus !== "connected") return;
+    if (apiStatus !== "connected" || clusterFetchingRef.current || !isPageVisibleRef.current) return;
+    clusterFetchingRef.current = true;
     try {
-      const [statusRes, eventsRes] = await Promise.all([
-        fetch("/api/cluster/status").then(r => r.json()),
-        fetch("/api/cluster/events").then(r => r.json()),
+      const [statusRes, eventsRes] = await Promise.allSettled([
+        fetch("/api/cluster/status").then(r => { if (!r.ok) throw new Error(`status ${r.status}`); return r.json(); }),
+        fetch("/api/cluster/events").then(r => { if (!r.ok) throw new Error(`events ${r.status}`); return r.json(); }),
       ]);
-      setClusterStatus(statusRes);
-      setClusterEvents(eventsRes.events || []);
-    } catch { }
+      if (statusRes.status === "fulfilled") setClusterStatus(statusRes.value);
+      else console.warn("[cluster/status] fetch failed:", statusRes.reason);
+      if (eventsRes.status === "fulfilled") setClusterEvents(eventsRes.value.events || []);
+      else console.warn("[cluster/events] fetch failed:", eventsRes.reason);
+    } finally {
+      clusterFetchingRef.current = false;
+    }
   }, [apiStatus]);
 
   useEffect(() => {
@@ -451,20 +490,29 @@ export default function DeployOpsCenter() {
   };
 
   const fetchScaleReport = async () => {
+    if (!isPageVisibleRef.current) return;
     try {
       const res = await fetch("/api/cluster/report");
       if (res.ok) { setScaleReport(await res.json()); }
-    } catch { }
+      else console.warn("[scale/report] fetch failed:", res.status);
+    } catch (err) {
+      console.warn("[scale/report] fetch error:", err);
+    }
   };
 
   const fetchValidations = async () => {
+    if (!isPageVisibleRef.current) return;
     try {
       const res = await fetch("/api/cluster/validations");
       if (res.ok) {
         const data = await res.json();
         setValidationResults(data.validations || []);
+      } else {
+        console.warn("[cluster/validations] fetch failed:", res.status);
       }
-    } catch { }
+    } catch (err) {
+      console.warn("[cluster/validations] fetch error:", err);
+    }
   };
 
   const handleRunValidation = async () => {
@@ -992,7 +1040,7 @@ export default function DeployOpsCenter() {
             </div>
 
             {/* RIGHT — Tabbed Panel (Agent / Insights) */}
-            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "#050b14" }}>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, background: "#050b14" }}>
 
               {/* Tab Bar */}
               <div style={{
@@ -1207,7 +1255,7 @@ export default function DeployOpsCenter() {
 
               {/* Insights Tab Content */}
               {rightTab === "insights" && (
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
 
                   {/* Insights Header Bar */}
                   <div style={{
@@ -1240,10 +1288,10 @@ export default function DeployOpsCenter() {
                     </button>
                   </div>
 
-                  <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+                  <div style={{ flex: 1, display: "flex", overflow: "hidden", minHeight: 0 }}>
 
                     {/* Left: Insights List */}
-                    <div style={{ flex: "0 0 55%", borderRight: "1px solid #0e1e2e", overflowY: "auto" }}>
+                    <div style={{ flex: "0 0 55%", borderRight: "1px solid #0e1e2e", overflowY: "auto", minHeight: 0 }}>
 
                       {/* Recommendations Section */}
                       {allRecommendations.length > 0 && (
@@ -1339,7 +1387,7 @@ export default function DeployOpsCenter() {
                     </div>
 
                     {/* Right: Patterns */}
-                    <div style={{ flex: 1, overflowY: "auto" }}>
+                    <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
                       <div style={{ padding: "10px 16px", background: "#060c18", fontSize: 9, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #0e1e2e" }}>
                         DETECTED PATTERNS
                       </div>

@@ -1,7 +1,10 @@
 """Graph endpoints — serve Neo4j data to the React force-graph visualization."""
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from db.neo4j_client import run_query
 
@@ -13,6 +16,7 @@ async def get_full_graph():
     """
     Return the complete service dependency graph in a format compatible with
     react-force-graph-2d: { nodes: [...], links: [...] }
+    Streams the response in chunks to avoid ECONNRESET on large graphs.
     """
     nodes_raw = await run_query(
         """
@@ -44,19 +48,35 @@ async def get_full_graph():
     for n in nodes_raw:
         score = n.get("health_score", 100)
         if score >= 80:
-            color = "#22c55e"   # green
+            color = "#22c55e"
         elif score >= 50:
-            color = "#f59e0b"   # amber
+            color = "#f59e0b"
         else:
-            color = "#ef4444"   # red
-
+            color = "#ef4444"
         nodes.append({
             **n,
             "color": color,
             "val": 8 if n.get("criticality") == "critical" else 5,
         })
 
-    return {"nodes": nodes, "links": links_raw}
+    async def stream():
+        yield '{"nodes":['
+        for i, node in enumerate(nodes):
+            if i > 0:
+                yield ","
+            yield json.dumps(node)
+        yield '],"links":['
+        for i, link in enumerate(links_raw):
+            if i > 0:
+                yield ","
+            yield json.dumps(link)
+        yield "]}"
+
+    return StreamingResponse(
+        stream(),
+        media_type="application/json",
+        headers={"X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/service/{service_name}")

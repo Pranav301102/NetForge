@@ -122,13 +122,11 @@ app.include_router(cluster_router)
 
 # Agent manifest returned by both /copilotkit?info=true and /copilotkit/info
 _AGENT_MANIFEST = {
-    "agents": [
-        {
-            "name": "default",
+    "agents": {
+        "default": {
             "description": "Forge reliability agent — powered by AWS Strands + Bedrock Claude",
-            "systemPrompt": None,
         }
-    ]
+    }
 }
 
 

@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-02-20T23:01:20.708947+00:00",
+  "last_updated": "2026-02-20T23:38:50.018783+00:00",
   "services": {
     "checkout-service": {
       "baseline_metrics": {
@@ -933,6 +933,94 @@
           "id": "ins-9ee585bd",
           "timestamp": "2026-02-20T22:53:57.511518+00:00",
           "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "low",
+          "title": "Platform Health Check - February 2026",
+          "insight": "Overall platform health is good with minor concerns. Infrastructure is running with healthy resource utilization (CPU 1.6%, Memory 26.2%). One host shows high system load and Redis monitoring shows a gap in data collection. No critical service degradation detected.",
+          "evidence": "{\"monitors\": {\"total\": 40, \"alerting\": 1, \"no_data\": 1}, \"resource_usage\": {\"cpu_percent\": 1.6, \"memory_percent\": 26.2}, \"hosts\": {\"total\": 30, \"status\": \"healthy\"}}",
+          "recommendation": "1. Investigate Redis monitoring gap and verify exporter functionality. 2. Monitor system load on affected host and consider load balancing if persistent. 3. Review resource allocation for optimization opportunities given current usage patterns.",
+          "id": "ins-aeb11ad7",
+          "timestamp": "2026-02-20T23:18:09.771873+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Platform Health Check - Redis Monitoring Gap",
+          "insight": "System-wide health check revealed generally stable operations with two issues: 1) High system load on one host 2) Redis memory consumption monitor showing No Data state. Overall resource utilization is healthy with CPU at 1.6% and memory at 26% of limits.",
+          "evidence": "{\"monitors_summary\": {\"total\": 40, \"alert\": 1, \"no_data\": 1, \"ok\": 38}, \"resource_usage\": {\"cpu_utilization\": 1.6, \"memory_utilization\": 26}, \"affected_services\": [\"redis\"]}",
+          "recommendation": "1. Investigate and resolve Redis monitoring gap to ensure memory consumption visibility 2. Analyze high system load on affected host 3. Consider reviewing container resource limits as current usage is significantly below limits",
+          "id": "ins-8a7a1288",
+          "timestamp": "2026-02-20T23:28:34.049565+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Platform Health Check - Critical Service Issues Detected",
+          "insight": "System-wide health check revealed three critical issues: 1) High Sidekiq job error rates affecting background processing, 2) Pod(s) in CrashLoopBackOff state indicating deployment or configuration issues, 3) Redis monitoring gap with no metrics being reported. Overall infrastructure is stable with good resource utilization (CPU 1.7%, Memory 26.4%) but service-level reliability issues need attention.",
+          "evidence": "{\"monitors_summary\": {\"total\": 40, \"ok\": 37, \"alert\": 2, \"no_data\": 1}, \"resource_usage\": {\"cpu_percent\": 1.7, \"memory_percent\": 26.4, \"cpu_throttling\": true}, \"critical_issues\": [\"sidekiq_errors\", \"pod_crashloop\", \"redis_monitoring_gap\"]}",
+          "recommendation": "1. Investigate and resolve Sidekiq job failures by checking error logs and job configurations. 2. Debug CrashLoopBackOff pods by examining pod logs and recent changes. 3. Restore Redis monitoring by checking Datadog agent configuration and Redis connectivity. 4. Monitor CPU throttling and consider resource adjustments if it persists.",
+          "id": "ins-465b97f4",
+          "timestamp": "2026-02-20T23:37:49.678013+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "Platform-wide analysis reveals multiple critical issues: Pod CrashLoopBackOff, high Sidekiq error rates, and system load problems. Redis monitoring shows gaps. Infrastructure consists of 30 hosts running diverse services including MongoDB, PostgreSQL, Redis, and Cassandra.",
+          "evidence": "{\"total_hosts\": 30, \"alert_monitors\": 3, \"no_data_monitors\": 1, \"active_metrics\": 2641, \"critical_issues\": [\"Pod CrashLoopBackOff\", \"High Sidekiq Error Rate\", \"High System Load\", \"Redis Monitoring Gap\"]}",
+          "recommendation": "1. Investigate and resolve CrashLoopBackOff pods immediately\n2. Debug Sidekiq job processing errors\n3. Analyze system load distribution and consider rebalancing\n4. Restore Redis monitoring coverage\n5. Implement automated scaling policies for high-load scenarios",
+          "id": "ins-6a8757df",
+          "timestamp": "2026-02-20T23:38:29.641244+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Health Issues Detected",
+          "insight": "System health check revealed multiple issues: 1) Pod(s) in CrashloopBackOff state 2) High Sidekiq job error rate 3) Redis monitoring data loss 4) Elevated system load on some hosts. While overall resource utilization is healthy, these issues could impact platform reliability.",
+          "evidence": "{\"alerts\": 3, \"no_data\": 1, \"cpu_usage_percent\": 1.57, \"memory_usage_percent\": 26.3, \"total_hosts\": 30, \"critical_issues\": [\"CrashloopBackOff\", \"Sidekiq Errors\", \"Redis Monitoring Loss\"]}",
+          "recommendation": "1) Investigate and resolve CrashloopBackOff pods immediately 2) Debug Sidekiq job processing errors 3) Restore Redis monitoring 4) Analyze system load patterns on affected hosts 5) Consider reviewing container resource allocations as current usage is well below limits.",
+          "id": "ins-9bfda657",
+          "timestamp": "2026-02-20T23:38:32.287971+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Degradation - Sidekiq and Pod Stability Issues",
+          "insight": "Platform is experiencing multiple service degradations: CrashLoopBackOff pods, Sidekiq job processing errors, and high system load on some hosts. Redis monitoring is also in No Data state. While overall resource utilization is moderate (26.4% memory, 1.67% CPU), there are signs of CPU throttling that may be contributing to service instability.",
+          "evidence": "{\"alerts\": 3, \"no_data\": 1, \"ok_monitors\": 36, \"cpu_throttled\": 3340441.9217, \"memory_usage_pct\": 26.4, \"affected_services\": [\"sidekiq\", \"redis\"]}",
+          "recommendation": "1. Investigate and resolve CrashLoopBackOff pods immediately\n2. Debug Sidekiq job processing errors and implement error handling\n3. Review system load patterns and consider host scaling\n4. Restore Redis monitoring and verify connectivity\n5. Evaluate CPU limits and throttling patterns for potential adjustment",
+          "id": "ins-2e1d3bd8",
+          "timestamp": "2026-02-20T23:38:42.496437+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "Platform health check revealed multiple critical issues: 1) Pod(s) in CrashLoopBackOff state 2) High Sidekiq job error rates 3) System load alerts on some hosts 4) Redis monitoring gap. While overall infrastructure shows 90% healthy monitors (36/40), the current issues affect critical platform components.",
+          "evidence": "{\"monitors_summary\": {\"total\": 40, \"alerting\": 3, \"no_data\": 1, \"ok\": 36}, \"resource_metrics\": {\"cpu_throttling\": 3650705.0095, \"memory_usage_pct\": 26.5}, \"critical_alerts\": [\"CrashloopBackOff\", \"Sidekiq Errors\", \"High System Load\"]}",
+          "recommendation": "1. Immediate investigation of CrashLoopBackOff pods - check logs and recent changes\n2. Analyze Sidekiq job error patterns and potential correlation with system load\n3. Review resource allocation on high-load hosts\n4. Restore Redis monitoring coverage\n5. Implement automated scaling triggers based on CPU throttling metrics",
+          "id": "ins-26ec46f3",
+          "timestamp": "2026-02-20T23:38:46.078869+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "Platform health check revealed multiple critical issues: 1) High Sidekiq job error rate, 2) Pod in CrashloopBackOff state, 3) High system load on hosts, 4) Redis monitoring gap. Resource metrics show some CPU throttling but memory usage is healthy at 26.5% utilization.",
+          "evidence": "{\"monitors_summary\":{\"total\":40,\"alert\":3,\"ok\":36,\"no_data\":1},\"resource_metrics\":{\"cpu_throttled\":3868386.2152,\"memory_utilization\":0.265}}",
+          "recommendation": "1. Investigate Sidekiq job failures and error patterns. 2. Debug and fix CrashloopBackOff pod. 3. Review and address system load issues. 4. Restore Redis monitoring. 5. Consider adjusting CPU limits due to throttling.",
+          "id": "ins-c5cebb68",
+          "timestamp": "2026-02-20T23:38:50.018757+00:00",
+          "status": "open"
         }
       ]
     },
@@ -971,6 +1059,17 @@
           "recommendation": "1. Verify Redis agent configuration\n2. Check connectivity between Datadog agent and Redis\n3. Validate Redis metrics collection permissions\n4. Review agent logs for potential collection errors",
           "id": "ins-15b6d167",
           "timestamp": "2026-02-20T23:01:14.741519+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Redis Memory Consumption Monitor in No Data State",
+          "insight": "The Redis memory consumption monitor is not receiving data, which could indicate issues with metric collection or the Redis service itself.",
+          "evidence": "{\"monitor_id\": 259579200, \"monitor_state\": \"No Data\", \"monitor_name\": \"[Redis] High memory consumption\"}",
+          "recommendation": "1. Verify Redis service is running properly\n2. Check Datadog agent configuration for Redis integration\n3. Validate Redis metrics collection endpoints\n4. Review any recent changes to Redis configuration",
+          "id": "ins-0b282243",
+          "timestamp": "2026-02-20T23:16:09.216333+00:00",
           "status": "open"
         }
       ]
@@ -1109,6 +1208,17 @@
           "recommendation": "1. Monitor CPU throttling trends over time\n2. If trend continues, consider increasing CPU limits\n3. Review workload patterns to identify optimization opportunities\n4. Consider workload distribution across nodes",
           "id": "ins-52f8ee9d",
           "timestamp": "2026-02-20T23:01:20.708932+00:00",
+          "status": "open"
+        },
+        {
+          "category": "cost",
+          "severity": "low",
+          "title": "Resource Over-provisioning Detected",
+          "insight": "Container resource utilization is significantly below allocated limits. CPU usage is at 1.67% of limit and memory at 25.77% of limit, indicating potential over-provisioning.",
+          "evidence": "{\"cpu_usage_percent\": 1.67, \"memory_usage_percent\": 25.77, \"cpu_metrics\": {\"usage\": 63450188.6326, \"limit\": 3793659863.9456}, \"memory_metrics\": {\"usage\": 304150084.9633, \"limit\": 1180246417.9763}}",
+          "recommendation": "1. Review and potentially reduce CPU limits based on actual usage patterns\n2. Consider adjusting memory limits while maintaining safe headroom\n3. Implement horizontal auto-scaling based on actual resource utilization\n4. Monitor cost savings after right-sizing",
+          "id": "ins-5fba8bfe",
+          "timestamp": "2026-02-20T23:16:16.994737+00:00",
           "status": "open"
         }
       ]

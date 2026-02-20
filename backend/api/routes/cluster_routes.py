@@ -3,7 +3,10 @@ Cluster management API — exposes the MAPE-K coordinator to the frontend.
 """
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from cluster.coordinator import get_coordinator
@@ -133,12 +136,24 @@ async def trigger_validation():
 
 @router.get("/validations")
 async def list_validations():
-    """List recent network validation results."""
+    """List recent network validation results, streamed in chunks."""
     coord = get_coordinator()
-    return {
-        "validations": coord.validation_results[-10:],
-        "count": len(coord.validation_results),
-    }
+    results = coord.validation_results[-10:]
+
+    async def stream():
+        payload = json.dumps({
+            "validations": results,
+            "count": len(coord.validation_results),
+        })
+        chunk_size = 4096
+        for i in range(0, len(payload), chunk_size):
+            yield payload[i:i + chunk_size]
+
+    return StreamingResponse(
+        stream(),
+        media_type="application/json",
+        headers={"X-Accel-Buffering": "no"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -169,14 +184,11 @@ async def scale_events():
 @router.get("/report")
 async def scale_report():
     """
-    Generate a comprehensive scaling report with:
-    - Current cluster status (replicas, queue, config)
-    - Scale event history (spawns + kills with timestamps)
-    - Validation results after each scale event
-    - Agent action log (remediations performed)
-    - Instance health timeline
+    Generate a comprehensive scaling report, streamed in chunks to avoid
+    ECONNRESET on large payloads.
     """
     from agent.tools.aws_tools import get_action_log
+    import datetime
 
     coord = get_coordinator()
     status = coord.get_status()
@@ -197,15 +209,14 @@ async def scale_report():
             "total_after": running_count,
         })
 
-    # Summary stats
     total_spawns = sum(1 for e in coord.scale_events if e.get("event") == "spawn")
     total_kills = sum(1 for e in coord.scale_events if e.get("event") == "kill")
     total_validations = len(coord.validation_results)
     validations_passed = sum(1 for v in coord.validation_results if v.get("status") == "passed")
 
-    return {
+    report = {
         "report_type": "comprehensive_scale_report",
-        "generated_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "cluster": {
             "total_replicas": status.get("total_replicas", 1),
             "replicas": status.get("replicas", []),
@@ -228,6 +239,18 @@ async def scale_report():
         },
         "actions": get_action_log()[:20],
     }
+
+    async def stream():
+        payload = json.dumps(report)
+        chunk_size = 4096
+        for i in range(0, len(payload), chunk_size):
+            yield payload[i:i + chunk_size]
+
+    return StreamingResponse(
+        stream(),
+        media_type="application/json",
+        headers={"X-Accel-Buffering": "no"},
+    )
 
 
 # ---------------------------------------------------------------------------
