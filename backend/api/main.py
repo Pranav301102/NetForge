@@ -157,6 +157,7 @@ async def copilotkit_endpoint(request: Request):
     Bridges CopilotKit frontend ↔ Strands agent.
     """
     from agent.agent import chat_with_agent
+    from agent.activity_log import log_activity
 
     body = await request.json()
     messages = body.get("messages", [])
@@ -181,14 +182,24 @@ async def copilotkit_endpoint(request: Request):
     # Context injected by useCopilotReadable on the frontend
     context = body.get("context", {})
 
+    # Log the incoming request
+    log_activity(
+        "analysis",
+        f"Agent invoked: {user_message[:100]}",
+        detail=user_message[:300],
+        source="claude",
+    )
+
     async def ag_ui_stream():
         """Emit CopilotKit-compatible AG-UI protocol events."""
         # 1. Run started
         yield f"data: {json.dumps({'type': 'RunStarted'})}\n\n"
         yield f"data: {json.dumps({'type': 'TextMessageStart', 'messageId': 'msg-1', 'role': 'assistant'})}\n\n"
 
+        full_response = ""
         try:
             async for chunk in chat_with_agent(user_message, context):
+                full_response += chunk
                 chunk_size = 20
                 for i in range(0, len(chunk), chunk_size):
                     piece = chunk[i:i + chunk_size]
@@ -199,6 +210,16 @@ async def copilotkit_endpoint(request: Request):
             err_msg = f"[Agent unavailable — running in demo mode. Error: {type(exc).__name__}: {exc}]"
             print(f"[CopilotKit] stream error: {traceback.format_exc()}")
             yield f"data: {json.dumps({'type': 'TextMessageContent', 'messageId': 'msg-1', 'delta': err_msg})}\n\n"
+            log_activity("error", f"Agent error: {type(exc).__name__}", detail=str(exc), source="system")
+
+        # Log completion with summary
+        summary = full_response[:200] if full_response else "No response generated"
+        log_activity(
+            "analysis",
+            f"Agent completed analysis",
+            detail=summary,
+            source="claude",
+        )
 
         yield f"data: {json.dumps({'type': 'TextMessageEnd', 'messageId': 'msg-1'})}\n\n"
         yield f"data: {json.dumps({'type': 'RunFinished'})}\n\n"

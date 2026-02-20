@@ -42,6 +42,22 @@ def _dd_get(path: str, params: str = "") -> tuple[int, Any]:
         "DD-APPLICATION-KEY": DD_APP_KEY,
         "Accept":             "application/json",
     }
+
+    # Log the tool call to activity feed
+    try:
+        from agent.activity_log import log_activity
+        # Extract a friendly name from the path
+        tool_name = path.split("/")[-1] if "/" in path else path
+        log_activity(
+            "tool_call",
+            f"Datadog API: {tool_name}",
+            detail=f"GET {path}" + (f" params={params[:100]}" if params else ""),
+            source="claude",
+            metadata={"api_path": path},
+        )
+    except Exception:
+        pass
+
     req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:

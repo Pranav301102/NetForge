@@ -52,6 +52,18 @@ def store_insight(
         "evidence": evidence,
         "recommendation": recommendation,
     })
+    # Log to activity feed
+    try:
+        from agent.activity_log import log_activity
+        log_activity(
+            "insight_stored",
+            f"[{severity.upper()}] {title}",
+            detail=f"{service_name}: {insight[:200]}",
+            source="claude",
+            metadata={"service": service_name, "category": category, "severity": severity, "insight_id": insight_id},
+        )
+    except Exception:
+        pass
     return f"Insight stored: {insight_id}"
 
 
@@ -83,6 +95,18 @@ def store_pattern(
         "confidence": confidence,
         "recommendation": recommendation,
     })
+    # Log to activity feed
+    try:
+        from agent.activity_log import log_activity
+        log_activity(
+            "pattern_stored",
+            f"Pattern: {pattern_type} on {service_name}",
+            detail=description[:200],
+            source="claude",
+            metadata={"service": service_name, "pattern_type": pattern_type, "confidence": confidence},
+        )
+    except Exception:
+        pass
     return f"Pattern stored: {pat_id}"
 
 

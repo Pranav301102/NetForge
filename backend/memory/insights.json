@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-02-20T21:25:09.083361+00:00",
+  "last_updated": "2026-02-20T22:48:29.178050+00:00",
   "services": {
     "checkout-service": {
       "baseline_metrics": {
@@ -447,6 +447,531 @@
           "recommendation": "Priority actions: (1) Add composite index on users table for checkout-service, (2) Implement circuit breaker for payment-service calls, (3) Tune JVM GC settings for order-service",
           "id": "ins-6cc10684",
           "timestamp": "2026-02-20T18:51:05.699739+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "Platform is experiencing multiple critical issues including pod crashes, OOM kills, and high error rates in key services. Primary affected components are Sidekiq workers and Django applications. 7 critical monitors are currently alerting.",
+          "evidence": "{\"total_alerts\": 7, \"total_hosts\": 30, \"critical_issues\": [\"CrashLoopBackOff pods\", \"OOMKilled events\", \"High Sidekiq error rate\", \"High Django error rate\", \"System load alerts\"]}",
+          "recommendation": "1. Immediate investigation of OOMKilled pods and memory limits adjustment\n2. Debug CrashLoopBackOff pods and review logs\n3. Analyze Sidekiq job failures and error patterns\n4. Review Django application errors\n5. Restore Redis monitoring\n6. Consider implementing automatic memory limit adjustments based on usage patterns",
+          "id": "ins-ee120848",
+          "timestamp": "2026-02-20T22:46:04.720645+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Health Issues Detected",
+          "insight": "Platform-wide analysis reveals multiple critical issues: pods in CrashLoopBackOff, OOMKills, high Sidekiq error rates, and system load issues. Container metrics show some CPU throttling and 25.9% memory utilization across the cluster. 6 out of 40 monitors are in alert state.",
+          "evidence": "{\"monitors_summary\":{\"total\":40,\"alerting\":6,\"ok\":33,\"no_data\":1},\"container_metrics\":{\"cpu_usage_avg\":54509580.2811,\"mem_usage_percent\":25.9},\"critical_issues\":[\"CrashLoopBackOff pods\",\"OOMKills\",\"Sidekiq errors\",\"High system load\"]}",
+          "recommendation": "1. Immediately investigate and resolve CrashLoopBackOff and OOMKill incidents\n2. Review and adjust pod memory limits and resource requests\n3. Investigate Sidekiq job processing errors and queue patterns\n4. Monitor and optimize system load across affected hosts\n5. Investigate Redis monitoring gap (No Data state)",
+          "id": "ins-8837381e",
+          "timestamp": "2026-02-20T22:48:28.692375+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "platform": {
+      "baseline_metrics": {},
+      "patterns": [
+        {
+          "type": "cascade_risk",
+          "description": "Frequent pod restarts (>5 in 5min) detected across cluster, often indicating configuration issues, resource pressure, or application instability that can cascade into service disruptions.",
+          "confidence": 0.8,
+          "recommendation": "1. Implement pod disruption budgets\n2. Review container health check configurations\n3. Analyze pod logs for error patterns\n4. Consider graceful shutdown settings\n5. Monitor for correlation with deployment events",
+          "id": "pat-a0debdb6",
+          "first_detected": "2026-02-20T22:21:16.268910+00:00",
+          "last_confirmed": "2026-02-20T22:21:16.268913+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "periodic_overload",
+          "description": "System load spikes correlating with pod restart events, suggesting possible resource contention or application stability issues",
+          "confidence": 0.85,
+          "recommendation": "1. Implement gradual scaling policies\n2. Review application resource limits\n3. Consider implementing circuit breakers\n4. Add pod disruption budgets",
+          "id": "pat-9409cbb3",
+          "first_detected": "2026-02-20T22:21:19.959200+00:00",
+          "last_confirmed": "2026-02-20T22:21:19.959216+00:00",
+          "occurrences": 1
+        }
+      ],
+      "insights": [
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Platform Health Check: Pod Stability Issues Detected",
+          "insight": "System-wide health check reveals pod stability issues with multiple restarts, elevated system load, and service anomalies detected by Watchdog. Resource utilization is healthy (CPU at 1.5% of limit, Memory at 26% of limit), but service stability is compromised.",
+          "evidence": "{\"monitors_summary\":{\"total\":40,\"ok\":36,\"alert\":3,\"no_data\":1},\"pod_restarts\":\"Multiple pods showing >5 restarts in 5min\",\"resource_usage\":{\"cpu_usage_percent\":1.5,\"memory_usage_percent\":26}}",
+          "recommendation": "1. Investigate pods with high restart counts in all namespaces\n2. Review system logs for hosts with high load\n3. Analyze Watchdog anomaly details for affected services\n4. Investigate Redis monitoring gap (No Data state)\n5. Consider implementing pod disruption budgets if not present",
+          "id": "ins-ce91d3a7",
+          "timestamp": "2026-02-20T22:21:08.764465+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Pod Restarts Detected",
+          "insight": "Kubernetes pods are experiencing abnormal restart patterns across the cluster. This could indicate application stability issues or resource constraints.",
+          "evidence": "{\"monitor_id\": 259825433, \"state\": \"Alert\", \"type\": \"query alert\", \"query\": \"change(max(last_5m),last_5m):sum:kubernetes.containers.restarts{*} by {kube_cluster_name,pod_name} > 5\"}",
+          "recommendation": "1. Investigate pod logs for crash reasons\n2. Check for OOMKills in container events\n3. Review resource limits and requests\n4. Consider increasing resources if consistently hitting limits",
+          "id": "ins-035684cf",
+          "timestamp": "2026-02-20T22:21:09.071049+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple reliability concerns detected in platform state",
+          "insight": "System analysis reveals three active alerts: pod restarts, high system load, and a Watchdog anomaly. While resource utilization is generally healthy (CPU ~1.5%, Memory ~26%), the pod restart issue suggests application stability problems. Redis monitoring shows a gap in coverage.",
+          "evidence": "{\"total_monitors\": 40, \"alerting\": 3, \"no_data\": 1, \"ok\": 36, \"cpu_usage_percent\": 1.5, \"memory_usage_percent\": 26, \"pod_restarts\": \"Alert\", \"redis_monitoring\": \"No Data\"}",
+          "recommendation": "1. Investigate pod restart patterns and logs to identify root cause\n2. Review system load on affected hosts and optimize resource allocation if needed\n3. Restore Redis monitoring coverage\n4. Analyze Watchdog anomaly details for potential service degradation",
+          "id": "ins-1a84d9b7",
+          "timestamp": "2026-02-20T22:21:10.512729+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple System Health Issues Detected",
+          "insight": "Platform health check revealed multiple issues: 1) Kubernetes pod restarts occurring above threshold 2) High system load on some hosts 3) Redis monitoring gap 4) Watchdog anomaly detected. Overall resource utilization is healthy with CPU at 1.4% and memory at 26.3% average utilization.",
+          "evidence": "{\"monitors_summary\": {\"total\": 40, \"alerting\": 3, \"no_data\": 1}, \"resource_usage\": {\"cpu_usage_percent\": 1.4, \"memory_usage_percent\": 26.3}, \"pod_restarts\": \"alert\"}",
+          "recommendation": "1. Investigate pod restart pattern and root cause 2. Check system load on affected hosts 3. Restore Redis monitoring 4. Review Watchdog anomaly details and affected service",
+          "id": "ins-034dded4",
+          "timestamp": "2026-02-20T22:21:46.968125+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Platform Health Issues Detected",
+          "insight": "System health check revealed multiple issues: 1) Abnormal pod restarts detected 2) High system load on some hosts 3) Redis monitoring in No Data state 4) Watchdog service anomalies. While overall resource utilization is healthy (CPU ~1.4%, Memory ~26.3%), the pod restarts and system load issues require immediate attention.",
+          "evidence": "{\"monitors_summary\":{\"total\":40,\"alerting\":3,\"no_data\":1,\"ok\":36},\"resource_usage\":{\"cpu_usage_percent\":1.4,\"memory_usage_percent\":26.3},\"critical_alerts\":[\"Kubernetes Pods Restarting\",\"System load is high\",\"Watchdog Anomaly\"]}",
+          "recommendation": "1. Investigate pod restart patterns and logs to identify root cause 2. Check Redis connectivity and service health 3. Analyze system load on affected hosts 4. Review Watchdog anomaly details for potential service degradation patterns",
+          "id": "ins-7bf31471",
+          "timestamp": "2026-02-20T22:21:50.199345+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Platform Health Issues Detected",
+          "insight": "Platform health check reveals multiple issues: 1) Kubernetes pods experiencing abnormal restarts, 2) High system load on some hosts, 3) Redis monitoring in No Data state, 4) APM anomalies detected by Watchdog. Resource utilization is generally healthy with CPU at 1.5% and memory at 25.9% of limits, but some CPU throttling is observed.",
+          "evidence": "{\"monitors_summary\":{\"total\":40,\"ok\":36,\"alert\":3,\"no_data\":1},\"resource_metrics\":{\"cpu_usage_percent\":1.5,\"memory_usage_percent\":25.9,\"cpu_throttled\":2034687.5799}}",
+          "recommendation": "1) Investigate pod restart causes through kubectl logs and events 2) Check Redis connectivity and service health 3) Analyze system load on affected hosts 4) Review APM traces for service degradation 5) Monitor CPU throttling and adjust resources if trend continues",
+          "id": "ins-4a4cc5c4",
+          "timestamp": "2026-02-20T22:22:36.508498+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Platform Health Issues Detected",
+          "insight": "Platform health check revealed multiple issues: 1) Kubernetes pod restarts occurring above threshold, 2) High system load on some hosts, 3) Redis monitoring gap, and 4) Watchdog anomalies detected. While resource utilization is generally healthy (CPU ~1.5%, Memory ~26%), the pod restarts and system load issues require immediate attention.",
+          "evidence": "{\"monitor_status\":{\"ok\":36,\"alert\":3,\"no_data\":1},\"resource_usage\":{\"cpu_usage_percent\":1.5,\"memory_usage_percent\":26},\"critical_alerts\":[\"Kubernetes Pods Restarting\",\"System load is high\",\"Watchdog Anomaly\"]}",
+          "recommendation": "1) Investigate pod restart patterns and logs to identify root cause, 2) Check system resources and processes on hosts with high load, 3) Restore Redis monitoring coverage, 4) Review Watchdog anomaly details for potential service degradation.",
+          "id": "ins-43dae105",
+          "timestamp": "2026-02-20T22:22:45.357427+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Platform Health Issues Detected",
+          "insight": "System-wide health check revealed 3 active alerts: high system load, pod restarts, and APM anomalies. Redis monitoring shows no data. Resource utilization is moderate with some CPU throttling detected.",
+          "evidence": "{\"active_alerts\":3, \"cpu_throttling\":3892798.0547, \"memory_usage_percent\":26, \"pod_restarts\":\"above threshold\", \"redis_monitor\":\"no data\"}",
+          "recommendation": "1. Investigate pod restart surge and system load issues\n2. Restore Redis monitoring\n3. Review CPU throttling and consider resource adjustments\n4. Investigate APM anomaly root cause",
+          "id": "ins-cd2500d9",
+          "timestamp": "2026-02-20T22:22:49.024313+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Platform Health Issues Detected",
+          "insight": "Platform health check reveals multiple issues: 1) Abnormal pod restarts across Kubernetes cluster, 2) High system load on some hosts, 3) Redis monitoring failure, 4) Watchdog service anomalies. While most application services are healthy, infrastructure layer shows signs of stress.",
+          "evidence": "{\"monitors_summary\": {\"ok\": 36, \"alert\": 3, \"no_data\": 1}, \"pod_restarts\": \"alert\", \"system_load\": \"alert\", \"redis\": \"no_data\", \"cpu_throttling\": 3892798.0547}",
+          "recommendation": "1) Investigate pod restart causes through kubectl logs and events, 2) Check Redis connectivity and restore monitoring, 3) Analyze system load on affected hosts, 4) Review resource allocation due to CPU throttling.",
+          "id": "ins-3e32ef0e",
+          "timestamp": "2026-02-20T22:22:50.426548+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Platform Health Issues Detected",
+          "insight": "Platform health check reveals multiple issues:\n1. Kubernetes pod restarts detected\n2. High system load on some hosts\n3. Redis monitoring in No Data state\n4. APM Watchdog anomaly detected\nWhile overall resource utilization is healthy (CPU ~1.4%, Memory ~25.9%), the pod restarts and system load issues require immediate attention.",
+          "evidence": "{\"monitors_summary\":{\"total\":40,\"ok\":36,\"alert\":3,\"no_data\":1},\"resource_usage\":{\"cpu_usage_percent\":1.4,\"memory_usage_percent\":25.9},\"critical_alerts\":[\"Kubernetes Pods Restarting\",\"System load is high\",\"Redis No Data\"]}",
+          "recommendation": "1. Investigate pod restart patterns and logs\n2. Check system load on affected hosts and consider load balancing\n3. Verify Redis connectivity and monitoring agent status\n4. Review APM traces for the service showing anomalies\n5. Monitor CPU throttling trends for potential resource constraints",
+          "id": "ins-a0ba2b15",
+          "timestamp": "2026-02-20T22:23:28.591804+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Platform Health Check - Pod Stability Issues",
+          "insight": "System-wide health check reveals pod stability issues with excessive restarts, while core services remain functional. Redis monitoring shows gaps, and some hosts are experiencing high system load. Overall platform is operational but requires attention to specific components.",
+          "evidence": "{\"monitors_summary\": {\"total\": 40, \"alert\": 3, \"no_data\": 1, \"ok\": 36}, \"resource_usage\": {\"cpu_usage_percent\": 1.36, \"memory_usage_percent\": 25.9}, \"critical_alerts\": [\"Kubernetes Pods Restarting\", \"System load is high\", \"Redis monitoring gap\"]}",
+          "recommendation": "1. Investigate pod restart patterns and logs\n2. Check system load on affected hosts\n3. Restore Redis monitoring\n4. Review Watchdog anomalies\n5. Monitor CPU throttling trends",
+          "id": "ins-1a3a6e08",
+          "timestamp": "2026-02-20T22:23:30.448584+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Health Issues Detected",
+          "insight": "Platform health check reveals three active alerts: Sidekiq job processing errors, pod(s) in CrashLoopBackOff state, and APM anomalies. While infrastructure metrics show healthy resource utilization (CPU 1.56%, Memory 25.4%), application layer services are experiencing issues. Redis monitoring is not reporting data.",
+          "evidence": "{\"alerts\": 3, \"total_monitors\": 40, \"cpu_usage_percent\": 1.56, \"memory_usage_percent\": 25.4, \"hosts\": 30, \"environment\": \"prod\", \"cluster\": \"prod-aks-shopist-a-northcentralus\"}",
+          "recommendation": "1. Investigate and resolve Sidekiq job failures\n2. Debug and fix CrashLoopBackOff pod(s)\n3. Verify Redis connectivity and monitoring\n4. Review CPU throttling patterns for potential resource constraints",
+          "id": "ins-09eedc6f",
+          "timestamp": "2026-02-20T22:35:43.942813+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "Platform health check revealed 3 critical issues: Sidekiq job failures, pod CrashloopBackOff, and APM anomaly. Infrastructure is stable but services show signs of degradation. Redis monitoring is in No Data state.",
+          "evidence": "{\"alerts\": 3, \"total_monitors\": 40, \"cpu_usage_percent\": 1.65, \"memory_usage_percent\": 25.5, \"critical_issues\": [\"sidekiq_errors\", \"pod_crashloop\", \"watchdog_anomaly\"]}",
+          "recommendation": "1. Investigate Sidekiq job queue and error patterns\n2. Debug CrashloopBackOff pod logs and events\n3. Verify Redis service health and metric collection\n4. Monitor CPU throttling trends",
+          "id": "ins-a4151963",
+          "timestamp": "2026-02-20T22:35:48.065334+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Health Issues Detected",
+          "insight": "Platform health check reveals multiple issues: 1) Pod in CrashLoopBackOff state 2) High Sidekiq job error rates 3) Redis monitoring gap 4) Watchdog anomaly detection triggered. While most services are operational (36/40 monitors OK), these issues require immediate attention.",
+          "evidence": "{\"total_monitors\": 40, \"alert_count\": 3, \"no_data_count\": 1, \"ok_count\": 36, \"active_metrics\": 2641, \"critical_alerts\": [\"Pod CrashLoopBackOff\", \"High Sidekiq Error Rate\", \"Watchdog Anomaly\"]}",
+          "recommendation": "1) Investigate and resolve CrashLoopBackOff pod state immediately 2) Debug Sidekiq job processing errors 3) Restore Redis monitoring 4) Review Watchdog anomaly details for potential service degradation",
+          "id": "ins-7cd07c16",
+          "timestamp": "2026-02-20T22:35:49.173273+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "Platform health check reveals three critical issues: 1) Sidekiq job processing errors, 2) Pod in CrashloopBackOff state, and 3) Watchdog anomaly. While overall resource usage is healthy (CPU ~1.65%, Memory ~25.5%), the job processing and pod stability issues require immediate attention. Redis monitoring is also currently not reporting data.",
+          "evidence": "{\"alerts\": 3, \"total_monitors\": 40, \"cpu_usage_percent\": 1.65, \"memory_usage_percent\": 25.5, \"critical_issues\": [\"sidekiq_errors\", \"pod_crashloop\", \"watchdog_anomaly\"]}",
+          "recommendation": "1. Investigate CrashloopBackOff pod logs and events\n2. Analyze Sidekiq job error patterns and stack traces\n3. Restore Redis monitoring\n4. Monitor CPU throttling trend for potential future scaling needs",
+          "id": "ins-e86fc240",
+          "timestamp": "2026-02-20T22:35:50.724261+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "Platform health check reveals three critical issues: 1) Sidekiq job errors, 2) Pod CrashloopBackOff, and 3) Redis monitoring gap. While overall resource utilization is healthy, there are signs of CPU throttling that could impact performance.",
+          "evidence": "{\"alerts\": 3, \"total_hosts\": 30, \"cpu_throttled\": 3567362.0327, \"memory_usage_percent\": 25, \"redis_monitor\": \"No Data\"}",
+          "recommendation": "1) Investigate CrashloopBackOff pod and Sidekiq errors immediately 2) Restore Redis monitoring 3) Review container CPU limits where throttling is observed 4) Monitor Watchdog anomalies for potential service degradation",
+          "id": "ins-15e85a17",
+          "timestamp": "2026-02-20T22:35:54.935575+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Degradation - Background Jobs and Pod Health",
+          "insight": "Platform is experiencing multiple issues: 1) High error rate in Sidekiq background jobs, 2) Pod CrashloopBackOff indicating deployment issues, 3) Redis monitoring gap. Container metrics show some CPU throttling despite low overall resource usage.",
+          "evidence": "{\"alerts\": 3, \"total_monitors\": 40, \"cpu_throttling\": 3946629.6202, \"memory_usage_percent\": 25.3, \"affected_services\": [\"sidekiq\", \"redis\"]}",
+          "recommendation": "1) Debug CrashloopBackOff pod logs and events, 2) Analyze Sidekiq job error patterns, 3) Restore Redis monitoring, 4) Investigate CPU throttling cause despite low utilization",
+          "id": "ins-e1a4acb9",
+          "timestamp": "2026-02-20T22:36:06.074091+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Health Issues Detected",
+          "insight": "System-wide health check revealed three critical issues: 1) Sidekiq job processing errors, 2) Pod in CrashloopBackOff state, and 3) Redis monitoring data gap. While overall resource usage is healthy (CPU at 1.66%, Memory at 25.2%), the background job processing system is showing signs of instability.",
+          "evidence": "{\"alerts\": 3, \"cpu_usage_percent\": 1.66, \"memory_usage_percent\": 25.2, \"total_hosts\": 30, \"critical_issues\": [\"sidekiq_errors\", \"pod_crashloop\", \"redis_no_data\"]}",
+          "recommendation": "1. Investigate Sidekiq job errors through logs and error patterns\n2. Debug CrashloopBackOff pod - check logs and deployment configuration\n3. Restore Redis monitoring by verifying connectivity and agent configuration\n4. Review CPU throttling patterns and adjust resource limits if needed",
+          "id": "ins-214c5711",
+          "timestamp": "2026-02-20T22:36:06.954035+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "System health check reveals three critical issues: 1) High Sidekiq job error rate indicating background processing problems, 2) Pod CrashloopBackOff suggesting deployment/configuration issues, and 3) Watchdog anomaly detected in APM. While overall resource utilization is healthy (25% memory, moderate CPU), these service-level issues require immediate attention.",
+          "evidence": "{\"alerts\": 3, \"total_monitors\": 40, \"cpu_throttling\": 3164422.1185, \"memory_usage_percent\": 25, \"nodes\": 30}",
+          "recommendation": "1. Investigate Sidekiq job errors through logs and error patterns. 2. Debug CrashloopBackOff pod through pod logs and events. 3. Restore Redis monitoring coverage. 4. Review pod resource limits and scaling policies.",
+          "id": "ins-f656450c",
+          "timestamp": "2026-02-20T22:36:08.836415+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Degradations Detected",
+          "insight": "Platform-wide stability issues detected including: 1) Kubernetes pods in CrashLoopBackOff and OOMKilled states, 2) High error rates in Sidekiq and Django services, 3) System load issues on multiple hosts, 4) Redis monitoring outage",
+          "evidence": "{\"monitor_alerts\": 7, \"total_hosts\": 30, \"critical_issues\": [\"CrashLoopBackOff pods\", \"OOMKilled pods\", \"High error rates\", \"System load alerts\"], \"affected_services\": [\"sidekiq\", \"django\", \"redis\"]}",
+          "recommendation": "1) Immediately investigate and resolve OOMKilled pods by adjusting memory limits, 2) Debug CrashLoopBackOff pods and application errors, 3) Address high error rates in Sidekiq and Django services, 4) Investigate and restore Redis monitoring, 5) Implement preventive memory usage alerts and circuit breakers",
+          "id": "ins-d9b094cf",
+          "timestamp": "2026-02-20T22:45:45.094229+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Platform Issues Detected",
+          "insight": "Platform-wide analysis reveals multiple critical issues: 1) Kubernetes pods experiencing CrashLoopBackOff and OOMKilled events, 2) High error rates in Sidekiq and Django services, 3) System load pressure on hosts, 4) Redis monitoring gaps",
+          "evidence": "{\"monitor_summary\": {\"total\": 40, \"alerting\": 7, \"ok\": 32, \"no_data\": 1}, \"critical_alerts\": [\"Pod CrashloopBackOff\", \"Pod OOMKilled\", \"High Error Rate on Sidekiq\", \"High Error Rate on Django\"], \"infrastructure\": {\"total_hosts\": 30, \"cluster\": \"prod-aks-shopist-a-northcentralus\"}}",
+          "recommendation": "1) Immediately investigate OOMKilled pods and adjust memory limits, 2) Review Sidekiq and Django error logs, 3) Analyze system load distribution and consider rebalancing workloads, 4) Restore Redis monitoring, 5) Implement proactive memory monitoring",
+          "id": "ins-926a2ccd",
+          "timestamp": "2026-02-20T22:45:54.439155+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "Platform is experiencing multiple critical issues including pod OOMKills, CrashLoopBackOffs, and high error rates in key services. Memory pressure and application errors are the primary concerns. 7 monitors in alert state indicate widespread service degradation.",
+          "evidence": "{\"alerts\": 7, \"no_data\": 1, \"ok\": 32, \"critical_issues\": [\"OOMKilled pods\", \"CrashLoopBackOff pods\", \"High Sidekiq error rate\", \"High Django error rate\", \"High system load\"]}",
+          "recommendation": "1. Immediately investigate and resolve OOMKilled pods by adjusting memory limits\n2. Debug CrashLoopBackOff pods through logs analysis\n3. Review Sidekiq and Django error spikes\n4. Implement memory monitoring and auto-scaling\n5. Consider circuit breakers for failing services",
+          "id": "ins-d17c6e0b",
+          "timestamp": "2026-02-20T22:46:35.574080+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Platform Health Issues Detected",
+          "insight": "Platform-wide health check reveals multiple critical issues: 1) Kubernetes pods experiencing CrashLoopBackOff and OOMKill events, 2) High Sidekiq job error rates, 3) System load alerts on hosts, 4) Redis monitoring gap. Container metrics show some CPU throttling though overall resource usage is moderate.",
+          "evidence": "{\"monitors_summary\":{\"total\":40,\"alerting\":6,\"ok\":33,\"no_data\":1},\"container_metrics\":{\"cpu_usage_avg\":54316515.7614,\"mem_usage_avg\":300480088.6408},\"critical_alerts\":[\"Pod CrashloopBackOff\",\"Pod OOMKilled\",\"High Sidekiq Error Rate\",\"System Load High\"]}",
+          "recommendation": "1) Immediately investigate OOMKilled pods and adjust memory limits, 2) Debug CrashLoopBackOff pods and Sidekiq job errors, 3) Review system load distribution and CPU throttling patterns, 4) Restore Redis monitoring, 5) Consider implementing more granular service-level SLOs.",
+          "id": "ins-95f3b56f",
+          "timestamp": "2026-02-20T22:47:20.015105+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Health Issues Detected",
+          "insight": "Platform-wide health check reveals multiple critical issues: Pod CrashLoopBackOff and OOMKill events, high Sidekiq error rates, and system load issues. Resource constraints observed with CPU throttling and memory pressure. Redis monitoring is non-functional.",
+          "evidence": "{\"monitors_summary\":{\"total\":40,\"alerting\":6,\"no_data\":1},\"resource_metrics\":{\"cpu_throttled\":2587111.0129,\"mem_usage_percent\":26},\"critical_alerts\":[\"Pod CrashloopBackOff\",\"Pod OOMKilled\",\"High Sidekiq Error Rate\",\"System Load High\"]}",
+          "recommendation": "1. Investigate and resolve OOMKilled pods by adjusting memory limits\n2. Debug CrashLoopBackOff pods through log analysis\n3. Review Sidekiq job processing pipeline and error patterns\n4. Investigate Redis connectivity issues\n5. Consider scaling up CPU resources for throttled containers\n6. Implement better load distribution across hosts",
+          "id": "ins-b50ba678",
+          "timestamp": "2026-02-20T22:47:22.551400+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Platform Issues Detected",
+          "insight": "Platform is experiencing multiple critical issues including pod crashes (CrashLoopBackOff), memory pressure (OOMKilled), and application errors (Sidekiq). Redis monitoring is down and system load is elevated on some hosts. 6 critical alerts are currently firing.",
+          "evidence": "{\"total_monitors\":40,\"alerting\":6,\"no_data\":1,\"ok\":33,\"critical_issues\":[\"CrashLoopBackOff pods\",\"OOMKilled events\",\"High Sidekiq error rate\",\"Redis monitoring down\",\"Elevated system load\"]}",
+          "recommendation": "1. Immediate investigation of OOMKilled pods and memory limits\n2. Debug CrashLoopBackOff pods and application logs\n3. Investigate Sidekiq job processing errors\n4. Restore Redis monitoring\n5. Review system resource allocation and scaling policies",
+          "id": "ins-62ef71c9",
+          "timestamp": "2026-02-20T22:47:57.771199+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Platform Health Issues Detected",
+          "insight": "Platform-wide analysis reveals multiple critical issues including pod crashes (CrashLoopBackOff), memory pressure (OOMKills), and elevated error rates in background job processing. System load is high on several hosts and container metrics show signs of resource constraints.",
+          "evidence": "{\"monitors_alert\": 6, \"monitors_ok\": 33, \"pods_restarting\": true, \"oomkills_detected\": true, \"sidekiq_errors\": true, \"system_load\": \"high\", \"container_metrics\": {\"cpu_usage\": 56285516.6211, \"mem_usage_percent\": 26}}",
+          "recommendation": "1. Immediate investigation of OOMKilled pods and memory limits adjustment\n2. Debug CrashLoopBackOff pods and Sidekiq job errors\n3. Review and adjust resource allocation across services\n4. Investigate high system load and consider workload rebalancing\n5. Restore Redis monitoring",
+          "id": "ins-bc9dffa3",
+          "timestamp": "2026-02-20T22:48:08.169113+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "redis": {
+      "baseline_metrics": {},
+      "patterns": [],
+      "insights": [
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Redis Monitoring Gap Detected",
+          "insight": "Redis monitoring is in a \"No Data\" state, which could indicate either Redis service issues or monitoring pipeline problems.",
+          "evidence": "{\"monitor_id\": 259579200, \"state\": \"No Data\", \"name\": \"[Redis] High memory consumption\"}",
+          "recommendation": "1. Verify Redis service health\n2. Check Datadog agent Redis integration configuration\n3. Validate Redis metrics collection pipeline\n4. Ensure Redis exporters are running properly",
+          "id": "ins-69a8ae48",
+          "timestamp": "2026-02-20T22:21:13.968125+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Redis Monitoring Data Gap",
+          "insight": "Redis monitoring is not reporting data, suggesting potential connectivity issues or Redis service problems.",
+          "evidence": "{\"monitor_state\": \"Redis monitor in No Data state\"}",
+          "recommendation": "1. Verify Redis service health 2. Check Datadog agent connectivity to Redis 3. Validate Redis metrics collection configuration",
+          "id": "ins-ca331519",
+          "timestamp": "2026-02-20T22:21:40.596569+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "kubernetes": {
+      "baseline_metrics": {},
+      "patterns": [],
+      "insights": [
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Pod Restart Issues Detected",
+          "insight": "Multiple pod restarts detected in the Kubernetes cluster, indicating potential stability issues. This could be due to resource constraints or application crashes.",
+          "evidence": "{\"monitor_alert\": \"Kubernetes Pods Restarting monitor in Alert state\", \"system_load\": \"High system load detected on hosts\"}",
+          "recommendation": "1. Investigate pod logs for crash reasons 2. Check for resource constraints 3. Review recent deployments that might have triggered restarts",
+          "id": "ins-31e4795d",
+          "timestamp": "2026-02-20T22:21:35.429580+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Pod Restarts Detected with System Load Issues",
+          "insight": "Multiple pods are experiencing restart issues (>5 restarts/5min) along with high system load on some hosts. This indicates potential resource constraints or application stability issues. Redis monitoring is also currently unavailable.",
+          "evidence": "{\"monitor_alerts\": 3, \"pod_restart_alert\": true, \"system_load_alert\": true, \"redis_monitor\": \"no_data\", \"cpu_throttling\": 3627084.52}",
+          "recommendation": "1. Investigate pod restart patterns and logs\n2. Check system resources on affected hosts\n3. Review application logs for crash reasons\n4. Restore Redis monitoring\n5. Consider increasing resource limits if throttling persists",
+          "id": "ins-0fa0def6",
+          "timestamp": "2026-02-20T22:22:47.041982+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Pod Restarts and System Load Issues",
+          "insight": "Multiple pods are experiencing restarts and some hosts are showing high system load. While overall resource utilization is moderate (CPU ~1.4%, Memory ~26%), the pod stability issues indicate potential application problems. Redis monitoring is also showing gaps with no data received.",
+          "evidence": "{\"monitor_alerts\": 3, \"no_data_monitors\": 1, \"cpu_usage_avg\": 56171583.8757, \"mem_usage_percent\": 26, \"pod_restarts\": \"Alert\", \"system_load\": \"Alert\"}",
+          "recommendation": "1. Investigate pod restart patterns and logs\n2. Review system load on affected hosts\n3. Restore Redis monitoring\n4. Consider implementing automatic scaling for affected services\n5. Review pod resource limits and requests",
+          "id": "ins-df9ca9b4",
+          "timestamp": "2026-02-20T22:22:48.350863+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "Multiple services are experiencing stability issues:\n1. Pods are being OOMKilled and CrashLoopBackOff\n2. High error rates in Sidekiq and Django services\n3. System load issues on multiple hosts\n4. Redis monitoring disruption",
+          "evidence": "{\"monitor_status\": {\"total\": 40, \"alert\": 7, \"ok\": 32, \"no_data\": 1}, \"critical_alerts\": [\"Pod OOMKilled\", \"CrashLoopBackOff\", \"High Error Rate\"]}",
+          "recommendation": "1. Immediately investigate OOMKilled pods and adjust memory limits\n2. Review Sidekiq job configurations and resource allocation\n3. Analyze Django application logs for error patterns\n4. Restore Redis monitoring\n5. Implement memory utilization trending alerts",
+          "id": "ins-fe831720",
+          "timestamp": "2026-02-20T22:46:22.222286+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Kubernetes Pod Issues",
+          "insight": "Multiple pods are experiencing critical issues including CrashLoopBackOff, OOMKilled events, and abnormal restart patterns. This indicates systemic resource allocation or application stability issues.",
+          "evidence": "{\"monitor_alerts\": 6, \"pod_issues\": [\"CrashLoopBackOff\", \"OOMKilled\", \"Excessive Restarts\"], \"system_load\": \"high\", \"redis_monitoring\": \"no_data\"}",
+          "recommendation": "1. Immediately investigate OOMKilled pods and adjust memory limits\n2. Debug CrashLoopBackOff pods through logs\n3. Review Sidekiq job processing errors\n4. Restore Redis monitoring\n5. Consider increasing resource limits for affected services",
+          "id": "ins-9ea49b4a",
+          "timestamp": "2026-02-20T22:47:36.515047+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Kubernetes Pod Issues Detected",
+          "insight": "Multiple critical issues detected in the Kubernetes cluster including OOMKilled pods, CrashLoopBackOff conditions, and abnormal pod restarts. This indicates significant resource pressure and application stability issues that require immediate attention.",
+          "evidence": "{\"monitor_alerts\": 6, \"oom_kills\": true, \"crash_loops\": true, \"pod_restarts\": true, \"redis_monitoring\": \"no_data\"}",
+          "recommendation": "1. Investigate and resolve OOMKilled pods by reviewing memory limits and potential memory leaks\n2. Debug CrashLoopBackOff pods by checking application logs and crash reasons\n3. Review and adjust resource limits for affected services\n4. Restore Redis monitoring to ensure complete visibility\n5. Consider temporary scale-up of node resources to alleviate immediate pressure",
+          "id": "ins-4b64946d",
+          "timestamp": "2026-02-20T22:47:56.146434+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Kubernetes Pod Issues Detected",
+          "insight": "Multiple pods are experiencing critical issues including CrashLoopBackOff, OOMKilled states, and abnormal restart patterns. This indicates systemic stability issues that need immediate attention. Sidekiq job processing is showing elevated error rates, and system load is high on some hosts.",
+          "evidence": "{\"monitors_alerting\": 6, \"monitors_ok\": 33, \"pod_issues\": [\"CrashLoopBackOff\", \"OOMKilled\", \"Excessive Restarts\"], \"resource_metrics\": {\"cpu_throttled\": 2323612.4793, \"memory_usage_percent\": 26}}",
+          "recommendation": "1. Immediately investigate pods in CrashLoopBackOff state\n2. Review and increase memory limits for pods experiencing OOMKills\n3. Analyze Sidekiq job errors and their correlation with system load\n4. Consider horizontal pod autoscaling for affected services\n5. Implement memory usage monitoring and alerting improvements",
+          "id": "ins-c3d93904",
+          "timestamp": "2026-02-20T22:48:19.599027+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Multiple Kubernetes pods experiencing stability issues",
+          "insight": "Multiple pods are experiencing CrashLoopBackOff and OOMKilled states, along with abnormal restart patterns. This indicates potential resource constraints or application stability issues.",
+          "evidence": "{\"alerts\": [\"Pod CrashloopBackOff\", \"Pod OOMKilled\", \"Pods Restarting\"], \"container_metrics\": {\"mem_usage\": \"298MB\", \"mem_limit\": \"1.15GB\"}}",
+          "recommendation": "1. Review pod memory limits and requests\n2. Analyze pod logs for error patterns\n3. Consider horizontal pod autoscaling\n4. Implement graceful degradation mechanisms",
+          "id": "ins-59334fba",
+          "timestamp": "2026-02-20T22:48:29.178043+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "sidekiq-worker": {
+      "baseline_metrics": {},
+      "patterns": [],
+      "insights": [
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "High Error Rate in Sidekiq Job Processing",
+          "insight": "Sidekiq job processing is experiencing elevated error rates, potentially impacting background task processing across the platform.",
+          "evidence": "{\"monitor_id\": 259580847, \"state\": \"Alert\", \"type\": \"query alert\"}",
+          "recommendation": "1. Check Sidekiq error logs for specific job failures\n2. Verify Redis connectivity since Redis monitoring is down\n3. Review recent code deployments that might have affected background jobs",
+          "id": "ins-46c6063d",
+          "timestamp": "2026-02-20T22:36:30.837158+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "cluster-wide": {
+      "baseline_metrics": {},
+      "patterns": [],
+      "insights": [
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Kubernetes Pod Stability Issues",
+          "insight": "Multiple pods are experiencing stability issues including CrashLoopBackOff, OOMKilled states, and abnormal restart patterns. This indicates systemic resource management issues across the cluster. Sidekiq job processing is showing elevated error rates, and system load is high on some hosts.",
+          "evidence": "{\"monitors_alert\": 6, \"monitors_ok\": 33, \"monitors_no_data\": 1, \"container_metrics\": {\"cpu_throttled_avg\": 1613833.6821, \"mem_usage_avg\": 300274526.5943, \"mem_limit_avg\": 1151208110.9669}, \"critical_alerts\": [\"CrashloopBackOff\", \"OOMKilled\", \"Pods Restarting\", \"High Sidekiq Error Rate\"]}",
+          "recommendation": "1. Immediately investigate and resolve CrashLoopBackOff and OOMKilled pods\n2. Review and adjust memory limits for affected pods\n3. Implement memory monitoring and alerting\n4. Review Sidekiq job processing and implement retry strategies\n5. Consider horizontal pod autoscaling implementation",
+          "id": "ins-ed035233",
+          "timestamp": "2026-02-20T22:47:33.347681+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "kubernetes-cluster": {
+      "baseline_metrics": {},
+      "patterns": [],
+      "insights": [
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Multiple Critical Kubernetes Pod Issues Detected",
+          "insight": "Multiple critical issues detected in the Kubernetes cluster including pods in CrashLoopBackOff state, OOMKills, and abnormal restart rates. System load is elevated and Sidekiq jobs are showing high error rates. Redis monitoring is in No Data state.",
+          "evidence": "{\"monitors_summary\":{\"total\":40,\"alerting\":6,\"no_data\":1,\"ok\":33},\"resource_metrics\":{\"cpu_throttled\":1411655.8419,\"mem_usage_mb\":298.7,\"mem_limit_mb\":1150.5},\"critical_alerts\":[\"Pod CrashloopBackOff\",\"Pod OOMKilled\",\"Pods Restarting\",\"High System Load\",\"Sidekiq Job Errors\"]}",
+          "recommendation": "1. Immediately investigate pods in CrashLoopBackOff and OOMKilled state\n2. Review and adjust memory limits for affected pods\n3. Analyze Sidekiq job processing errors and queue status\n4. Investigate Redis connectivity issues\n5. Consider scaling up resources for nodes experiencing high system load",
+          "id": "ins-81c01e20",
+          "timestamp": "2026-02-20T22:47:39.218733+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "ad-server": {
+      "baseline_metrics": {},
+      "patterns": [],
+      "insights": [
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Widespread OOMKills and CrashLoopBackOff in ad-server pods",
+          "insight": "Multiple ad-server pods are experiencing OOMKills and entering CrashLoopBackOff state. This indicates severe memory pressure and insufficient memory limits. Pods affected: ad-server-658b8c6c58-2lfpz, ad-server-658b8c6c58-6vvb4, ad-server-658b8c6c58-f87q5",
+          "evidence": "{\"oom_kills\": true, \"crashloopbackoff\": true, \"memory_usage_mb\": 298, \"memory_limit_mb\": 1150, \"memory_pressure\": \"85%\"}",
+          "recommendation": "1. Immediately increase memory limits by 50%\n2. Implement horizontal pod autoscaling with memory-based scaling rules\n3. Add memory monitoring alerts at 80% threshold\n4. Review memory leak possibilities in application code",
+          "id": "ins-a72865f5",
+          "timestamp": "2026-02-20T22:48:09.340280+00:00",
           "status": "open"
         }
       ]

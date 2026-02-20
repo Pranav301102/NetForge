@@ -160,3 +160,128 @@ async def complete_work(work_id: str):
 async def scale_events():
     coord = get_coordinator()
     return {"events": coord.scale_events, "count": len(coord.scale_events)}
+
+
+# ---------------------------------------------------------------------------
+# Comprehensive scale report
+# ---------------------------------------------------------------------------
+
+@router.get("/report")
+async def scale_report():
+    """
+    Generate a comprehensive scaling report with:
+    - Current cluster status (replicas, queue, config)
+    - Scale event history (spawns + kills with timestamps)
+    - Validation results after each scale event
+    - Agent action log (remediations performed)
+    - Instance health timeline
+    """
+    from agent.tools.aws_tools import get_action_log
+
+    coord = get_coordinator()
+    status = coord.get_status()
+
+    # Build instance timeline from events
+    instance_timeline = []
+    running_count = 1
+    for evt in coord.scale_events:
+        if evt.get("event") == "spawn":
+            running_count += 1
+        elif evt.get("event") == "kill":
+            running_count = max(1, running_count - 1)
+        instance_timeline.append({
+            "timestamp": evt.get("timestamp", ""),
+            "event": evt.get("event", ""),
+            "name": evt.get("name", ""),
+            "reason": evt.get("reason", ""),
+            "total_after": running_count,
+        })
+
+    # Summary stats
+    total_spawns = sum(1 for e in coord.scale_events if e.get("event") == "spawn")
+    total_kills = sum(1 for e in coord.scale_events if e.get("event") == "kill")
+    total_validations = len(coord.validation_results)
+    validations_passed = sum(1 for v in coord.validation_results if v.get("status") == "passed")
+
+    return {
+        "report_type": "comprehensive_scale_report",
+        "generated_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        "cluster": {
+            "total_replicas": status.get("total_replicas", 1),
+            "replicas": status.get("replicas", []),
+            "pending_work_items": status.get("pending_work_items", 0),
+            "completed_analyses": status.get("completed_analyses", 0),
+        },
+        "scaling_summary": {
+            "total_scale_ups": total_spawns,
+            "total_scale_downs": total_kills,
+            "current_instances": status.get("total_replicas", 1),
+            "max_instances_reached": max([e.get("total_replicas", 1) for e in coord.scale_events] or [1]),
+        },
+        "instance_timeline": instance_timeline,
+        "scale_events": coord.scale_events,
+        "validations": {
+            "total": total_validations,
+            "passed": validations_passed,
+            "failed": total_validations - validations_passed,
+            "results": coord.validation_results[-10:],
+        },
+        "actions": get_action_log()[:20],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Manual scale up/down
+# ---------------------------------------------------------------------------
+
+class ManualScaleRequest(BaseModel):
+    direction: str  # "up" or "down"
+    reason: str = "manual"
+
+
+@router.post("/scale")
+async def manual_scale(body: ManualScaleRequest):
+    """Manually scale the cluster up or down by one replica."""
+    coord = get_coordinator()
+    if body.direction == "up":
+        if len(coord.replicas) >= 6:
+            raise HTTPException(400, "Maximum replica count reached (6)")
+        coord._last_scale_time = 0  # bypass cooldown
+        replica = coord._spawn_replica()
+        coord.scale_events.append({
+            "event": "spawn",
+            "name": replica.name,
+            "reason": f"manual: {body.reason}",
+            "total_replicas": len(coord.replicas),
+            "timestamp": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        })
+        coord._rebalance_partitions()
+        # Run validation
+        validation = await coord.run_pending_validation()
+        return {
+            "action": "scale_up",
+            "new_replica": replica.name,
+            "total_replicas": len(coord.replicas),
+            "validation": validation,
+        }
+    elif body.direction == "down":
+        if len(coord.replicas) <= 1:
+            raise HTTPException(400, "Cannot scale below 1 replica")
+        victim = coord.replicas[-1]
+        coord._kill_replica(victim.replica_id)
+        coord.scale_events.append({
+            "event": "kill",
+            "name": victim.name,
+            "reason": f"manual: {body.reason}",
+            "total_replicas": len(coord.replicas),
+            "timestamp": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        })
+        coord._rebalance_partitions()
+        return {
+            "action": "scale_down",
+            "removed_replica": victim.name,
+            "total_replicas": len(coord.replicas),
+        }
+    else:
+        raise HTTPException(400, "direction must be 'up' or 'down'")
+

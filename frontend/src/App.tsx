@@ -1,4 +1,4 @@
-import {
+import React, {
   useState,
   useEffect,
   useRef,
@@ -7,10 +7,44 @@ import {
 } from "react";
 import * as d3 from "d3";
 import { CopilotKit } from "@copilotkit/react-core";
-import { CopilotSidebar } from "@copilotkit/react-ui";
+import { CopilotChat } from "@copilotkit/react-ui";
 import { useCopilotReadable, useCopilotAction } from "@copilotkit/react-core";
 import "@copilotkit/react-ui/styles.css";
-import { CheckCircle2, ShieldAlert, ActivitySquare, ServerCrash, Lightbulb, TrendingUp, AlertTriangle, Eye, CheckCheck, Network, Cpu, Zap } from "lucide-react";
+import { CheckCircle2, ShieldAlert, ActivitySquare, ServerCrash, Lightbulb, TrendingUp, AlertTriangle, Eye, CheckCheck, Network, Cpu, Zap, ArrowUpCircle, ArrowDownCircle, FileText, Play, BarChart3 } from "lucide-react";
+
+// ─── Error Boundary for CopilotKit ──────────────────────────────────────────
+class CopilotErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: "" };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error: error.message };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 20, color: "#f5a623", fontFamily: "'DM Mono', monospace", fontSize: 11, background: "#0a1018", minHeight: "100vh" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "80vh", gap: 16 }}>
+            <div style={{ fontSize: 32 }}>⚠️</div>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 14, color: "#c8daf0", marginBottom: 8 }}>Agent Backend Unavailable</div>
+              <div style={{ color: "#6a8aa0", maxWidth: 400 }}>Start the backend with <code style={{ background: "#1a2a3a", padding: "2px 6px", borderRadius: 3 }}>python -m uvicorn api.main:app --reload --port 8000</code></div>
+            </div>
+            <button onClick={() => { this.setState({ hasError: false }); window.location.reload(); }}
+              style={{ marginTop: 12, padding: "8px 24px", background: "#7b61ff", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
+              Retry Connection
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 type Health = "healthy" | "degraded" | "critical" | "rolling";
 type NodeType = "gateway" | "service" | "database" | "cache" | "queue" | "storage";
@@ -144,7 +178,7 @@ export default function DeployOpsCenter() {
   const [showInsights, setShowInsights] = useState(false);
 
   // Insights panel state
-  const [rightTab, setRightTab] = useState<"agent" | "insights">("agent");
+  const [rightTab, setRightTab] = useState<"agent" | "insights" | "scaling">("agent");
   const [allInsights, setAllInsights] = useState<any[]>([]);
   const [allPatterns, setAllPatterns] = useState<any[]>([]);
   const [allRecommendations, setAllRecommendations] = useState<any[]>([]);
@@ -155,6 +189,16 @@ export default function DeployOpsCenter() {
   const [clusterStatus, setClusterStatus] = useState<any>(null);
   const [clusterEvents, setClusterEvents] = useState<any[]>([]);
   const [simulatingLoad, setSimulatingLoad] = useState(false);
+
+  // Scaling dashboard state
+  const [scaleReport, setScaleReport] = useState<any>(null);
+  const [scalingInProgress, setScalingInProgress] = useState(false);
+  const [validationResults, setValidationResults] = useState<any[]>([]);
+  const [showScaleReport, setShowScaleReport] = useState(false);
+
+  // Agent live activity feed
+  const [agentActivity, setAgentActivity] = useState<any[]>([]);
+  const [activitySinceId, setActivitySinceId] = useState(0);
 
   // Ref so D3 click handlers always call the latest version of handleNodeClick
   // without stale closures from the useEffect capture.
@@ -269,15 +313,41 @@ export default function DeployOpsCenter() {
   }, [apiStatus]);
 
   useEffect(() => {
-    if (rightTab === "insights") fetchInsightsData();
+    if (rightTab === "insights" || rightTab === "agent") fetchInsightsData();
   }, [rightTab, fetchInsightsData]);
 
-  // Poll insights every 15s when the tab is active
+  // Poll insights every 15s when insights or agent tab is active
   useEffect(() => {
-    if (rightTab !== "insights" || apiStatus !== "connected") return;
+    if ((rightTab !== "insights" && rightTab !== "agent") || apiStatus !== "connected") return;
     const id = setInterval(fetchInsightsData, 15000);
     return () => clearInterval(id);
   }, [rightTab, apiStatus, fetchInsightsData]);
+
+  // Poll agent activity feed every 3s on agent tab
+  useEffect(() => {
+    if (rightTab !== "agent" || apiStatus !== "connected") return;
+    const fetchActivity = async () => {
+      try {
+        const res = await fetch(`/api/agent/activity?since_id=${activitySinceId}&limit=30`);
+        const data = await res.json();
+        if (data.activity && data.activity.length > 0) {
+          setAgentActivity((prev: any[]) => {
+            const merged = [...data.activity, ...prev];
+            const seen = new Set();
+            return merged.filter((a: any) => {
+              if (seen.has(a.id)) return false;
+              seen.add(a.id);
+              return true;
+            }).slice(0, 50);
+          });
+          setActivitySinceId(Math.max(...data.activity.map((a: any) => a.id)));
+        }
+      } catch { }
+    };
+    fetchActivity();
+    const id = setInterval(fetchActivity, 3000);
+    return () => clearInterval(id);
+  }, [rightTab, apiStatus, activitySinceId]);
 
   const handleGenerateInsights = async (serviceName?: string) => {
     setGeneratingInsights(true);
@@ -362,6 +432,61 @@ export default function DeployOpsCenter() {
       await fetchClusterStatus();
     } catch { }
   };
+
+  // ── Scaling handlers ────────────────────────────────────────────────────
+  const handleManualScale = async (direction: "up" | "down") => {
+    setScalingInProgress(true);
+    try {
+      const res = await fetch("/api/cluster/scale", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ direction, reason: "user_initiated" }),
+      });
+      if (res.ok) {
+        await fetchClusterStatus();
+        await fetchScaleReport();
+      }
+    } catch { }
+    setScalingInProgress(false);
+  };
+
+  const fetchScaleReport = async () => {
+    try {
+      const res = await fetch("/api/cluster/report");
+      if (res.ok) { setScaleReport(await res.json()); }
+    } catch { }
+  };
+
+  const fetchValidations = async () => {
+    try {
+      const res = await fetch("/api/cluster/validations");
+      if (res.ok) {
+        const data = await res.json();
+        setValidationResults(data.validations || []);
+      }
+    } catch { }
+  };
+
+  const handleRunValidation = async () => {
+    try {
+      await fetch("/api/cluster/validate", { method: "POST" });
+      await fetchValidations();
+    } catch { }
+  };
+
+  useEffect(() => {
+    if (rightTab === "scaling") {
+      fetchScaleReport();
+      fetchValidations();
+    }
+  }, [rightTab]);
+
+  // Poll scaling tab every 3s
+  useEffect(() => {
+    if (rightTab !== "scaling" || apiStatus !== "connected") return;
+    const id = setInterval(() => { fetchScaleReport(); fetchValidations(); fetchClusterStatus(); }, 3000);
+    return () => clearInterval(id);
+  }, [rightTab, apiStatus]);
 
   // ── Node click handler (kept current via ref, called from D3) ────────────
   const handleNodeClick = useCallback(
@@ -620,736 +745,1150 @@ export default function DeployOpsCenter() {
     value: insightsData,
   });
 
+  useCopilotReadable({
+    description: "Current cluster scaling status including replicas, queue depth, and recent scale events.",
+    value: clusterStatus ? {
+      total_replicas: clusterStatus.total_replicas,
+      pending_work: clusterStatus.pending_work_items,
+      completed: clusterStatus.completed_analyses,
+      recent_events: clusterEvents.slice(-5),
+    } : null,
+  });
+
+  // ── CopilotKit Actions — let AI control the UI ────────────────────────────
+
+  // @ts-ignore - CopilotKit types mismatch
+  useCopilotAction({
+    name: "selectService",
+    description: "Select and analyze a specific service in the dependency graph. Use this when the user asks about a service.",
+    parameters: [{ name: "serviceName", type: "string" as const, description: "Service ID like 'payment-service' or 'api-gateway'" }],
+    handler: ({ serviceName }: { serviceName: string }) => {
+      const node = nodes.find(n => n.id === serviceName);
+      if (node) nodeClickRef.current(node as NodeDatum);
+      return `Selected ${serviceName}`;
+    },
+  });
+
+  // @ts-ignore - CopilotKit types mismatch
+  useCopilotAction({
+    name: "scaleCluster",
+    description: "Scale the agent cluster up or down. Use 'up' to add instances when overloaded, 'down' to remove idle instances.",
+    parameters: [{ name: "direction", type: "string" as const, description: "'up' or 'down'" }],
+    handler: async ({ direction }: { direction: string }) => {
+      await handleManualScale(direction as "up" | "down");
+      return `Scaled cluster ${direction}. Now at ${clusterStatus?.total_replicas || '?'} replicas.`;
+    },
+  });
+
+  // @ts-ignore - CopilotKit types mismatch
+  useCopilotAction({
+    name: "generateInsights",
+    description: "Generate optimization insights for all services or a specific one.",
+    parameters: [{ name: "serviceName", type: "string" as const, description: "Optional service name, leave empty for all", required: false }],
+    handler: async ({ serviceName }: { serviceName?: string }) => {
+      await handleGenerateInsights(serviceName);
+      setRightTab("insights");
+      return `Generated insights${serviceName ? ` for ${serviceName}` : ' for all services'}`;
+    },
+  });
+
+  // @ts-ignore - CopilotKit types mismatch
+  useCopilotAction({
+    name: "simulateTrafficSpike",
+    description: "Simulate a traffic spike to test auto-scaling. This floods the work queue and triggers the MAPE-K loop.",
+    parameters: [],
+    handler: async () => {
+      await handleSimulateLoad();
+      setRightTab("scaling");
+      return "Simulated traffic spike. Check the Scaling tab for results.";
+    },
+  });
+
+  // @ts-ignore - CopilotKit types mismatch
+  useCopilotAction({
+    name: "runNetworkValidation",
+    description: "Run TestSprite network validation to verify all endpoints are healthy after a scale event.",
+    parameters: [],
+    handler: async () => {
+      await handleRunValidation();
+      setRightTab("scaling");
+      return "Network validation complete. Check the Scaling tab for results.";
+    },
+  });
+
   const selectedNodeData = selectedNode ? nodes.find(n => n.id === selectedNode.id) : null;
 
   // ─── RENDER ──────────────────────────────────────────────────────────────
 
   return (
-    <CopilotKit publicApiKey="ck_pub_16fefb799d506d90a688889ee017d055" runtimeUrl="http://localhost:8000/copilotkit">
-      <div style={{
-        fontFamily: "'DM Mono', 'Courier New', monospace",
-        background: "#050b14",
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        color: "#c8daf0",
-      }}>
-        {/* Header */}
-        <header style={{
-          padding: "12px 24px",
-          borderBottom: "1px solid #0e1e2e",
+    <CopilotErrorBoundary>
+      <CopilotKit runtimeUrl="http://localhost:8000/copilotkit">
+        <div style={{
+          fontFamily: "'DM Mono', 'Courier New', monospace",
+          background: "#050b14",
+          minHeight: "100vh",
           display: "flex",
-          alignItems: "center",
-          gap: 16,
-          background: "#070e1a",
+          flexDirection: "column",
+          color: "#c8daf0",
         }}>
-          <span style={{ fontSize: 11, color: "#3a5a7a", letterSpacing: 3 }}>STRANDS//OPS</span>
-          <span style={{ flex: 1 }} />
-          {[
-            { label: "HEALTHY", count: nodes.filter(n => n.health === "healthy").length, color: "#00e5a0" },
-            { label: "DEGRADED", count: nodes.filter(n => n.health === "degraded").length, color: "#f5a623" },
-            { label: "CRITICAL", count: nodes.filter(n => n.health === "critical").length, color: "#ff3b5c" },
-          ].map(s => (
-            <span key={s.label} style={{ fontSize: 10, color: s.color, letterSpacing: 2 }}>
-              {s.label} <span style={{ fontSize: 14, fontWeight: "bold" }}>{s.count}</span>
-            </span>
-          ))}
-          {/* API status badge */}
-          <span style={{
-            fontSize: 9,
-            color: apiStatus === "connected" ? "#00e5a0" : apiStatus === "offline" ? "#ff3b5c" : "#f5a623",
-            letterSpacing: 2,
-            marginLeft: 16,
-            border: "1px solid currentColor",
-            padding: "2px 6px",
-            borderRadius: 2,
-          }}>
-            {apiStatus === "connected" ? "● LIVE" : apiStatus === "offline" ? "● OFFLINE" : "● CONNECTING"}
-          </span>
-          <span style={{ fontSize: 10, color: "#3a5a7a", marginLeft: 8 }}>
-            {new Date().toLocaleTimeString()}
-          </span>
-        </header>
-
-        {/* Main */}
-        <div style={{ display: "flex", flex: 1, overflow: "hidden", height: "calc(100vh - 45px)" }}>
-
-          {/* LEFT — Dependency Graph */}
-          <div style={{
-            flex: "0 0 58%",
-            borderRight: "1px solid #0e1e2e",
+          {/* Header */}
+          <header style={{
+            padding: "12px 24px",
+            borderBottom: "1px solid #0e1e2e",
             display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
+            alignItems: "center",
+            gap: 16,
+            background: "#070e1a",
           }}>
-            <div style={{
-              padding: "10px 18px",
-              fontSize: 10,
-              color: "#3a5a7a",
+            <span style={{ fontSize: 14, fontWeight: "bold", background: "linear-gradient(135deg, #7b61ff, #00e5a0)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", letterSpacing: 3 }}>NETFORGE</span>
+            <span style={{ fontSize: 8, color: "#4a6a8a", marginLeft: 8, border: "1px solid #1a2a3a", padding: "2px 6px", borderRadius: 2 }}>Claude + MiniMax</span>
+            <span style={{ flex: 1 }} />
+            {[
+              { label: "HEALTHY", count: nodes.filter(n => n.health === "healthy").length, color: "#00e5a0" },
+              { label: "DEGRADED", count: nodes.filter(n => n.health === "degraded").length, color: "#f5a623" },
+              { label: "CRITICAL", count: nodes.filter(n => n.health === "critical").length, color: "#ff3b5c" },
+            ].map(s => (
+              <span key={s.label} style={{ fontSize: 10, color: s.color, letterSpacing: 2 }}>
+                {s.label} <span style={{ fontSize: 14, fontWeight: "bold" }}>{s.count}</span>
+              </span>
+            ))}
+            {/* API status badge */}
+            <span style={{
+              fontSize: 9,
+              color: apiStatus === "connected" ? "#00e5a0" : apiStatus === "offline" ? "#ff3b5c" : "#f5a623",
               letterSpacing: 2,
-              borderBottom: "1px solid #0e1e2e",
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
+              marginLeft: 16,
+              border: "1px solid currentColor",
+              padding: "2px 6px",
+              borderRadius: 2,
             }}>
-              <span>CONTAINER DEPENDENCY GRAPH</span>
-              <span style={{ flex: 1 }} />
-              {HEALTHS.map(h => (
-                <span key={h} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: HEALTH_COLORS[h], display: "inline-block" }} />
-                  <span style={{ color: "#4a6a8a", fontSize: 9 }}>{h}</span>
-                </span>
-              ))}
-            </div>
+              {apiStatus === "connected" ? "● LIVE" : apiStatus === "offline" ? "● OFFLINE" : "● CONNECTING"}
+            </span>
+            <span style={{ fontSize: 10, color: "#3a5a7a", marginLeft: 8 }}>
+              {new Date().toLocaleTimeString()}
+            </span>
+          </header>
 
-            <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-              <svg ref={svgRef} style={{ width: "100%", height: "100%", display: "block" }} />
+          {/* Main */}
+          <div style={{ display: "flex", flex: 1, overflow: "hidden", height: "calc(100vh - 45px)" }}>
 
-              {/* Selected node detail overlay */}
-              {selectedNodeData && (
-                <div style={{
-                  position: "absolute",
-                  bottom: 16,
-                  left: 16,
-                  background: "#070e1a",
-                  border: `1px solid ${HEALTH_COLORS[selectedNodeData.health]}44`,
-                  borderLeft: `3px solid ${HEALTH_COLORS[selectedNodeData.health]}`,
-                  padding: "12px 16px",
-                  width: 240,
-                  borderRadius: 4,
-                }}>
-                  <div style={{ fontSize: 11, color: "#c8daf0", marginBottom: 8, display: "flex", justifyContent: "space-between" }}>
-                    <span>{selectedNodeData.label}</span>
-                    <span style={{ color: HEALTH_COLORS[selectedNodeData.health], fontSize: 9, letterSpacing: 1 }}>
-                      {(activeRemediations[selectedNodeData.id] || selectedNodeData.health).toUpperCase()}
-                    </span>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            {/* LEFT — Dependency Graph */}
+            <div style={{
+              flex: "0 0 58%",
+              borderRight: "1px solid #0e1e2e",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+            }}>
+              <div style={{
+                padding: "10px 18px",
+                fontSize: 10,
+                color: "#3a5a7a",
+                letterSpacing: 2,
+                borderBottom: "1px solid #0e1e2e",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+              }}>
+                <span>CONTAINER DEPENDENCY GRAPH</span>
+                <span style={{ flex: 1 }} />
+                {HEALTHS.map(h => (
+                  <span key={h} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: HEALTH_COLORS[h], display: "inline-block" }} />
+                    <span style={{ color: "#4a6a8a", fontSize: 9 }}>{h}</span>
+                  </span>
+                ))}
+              </div>
+
+              <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+                <svg ref={svgRef} style={{ width: "100%", height: "100%", display: "block" }} />
+
+                {/* Selected node detail overlay */}
+                {selectedNodeData && (
+                  <div style={{
+                    position: "absolute",
+                    bottom: 16,
+                    left: 16,
+                    background: "#070e1a",
+                    border: `1px solid ${HEALTH_COLORS[selectedNodeData.health]}44`,
+                    borderLeft: `3px solid ${HEALTH_COLORS[selectedNodeData.health]}`,
+                    padding: "12px 16px",
+                    width: 240,
+                    borderRadius: 4,
+                  }}>
+                    <div style={{ fontSize: 11, color: "#c8daf0", marginBottom: 8, display: "flex", justifyContent: "space-between" }}>
+                      <span>{selectedNodeData.label}</span>
+                      <span style={{ color: HEALTH_COLORS[selectedNodeData.health], fontSize: 9, letterSpacing: 1 }}>
+                        {(activeRemediations[selectedNodeData.id] || selectedNodeData.health).toUpperCase()}
+                      </span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+                      {[
+                        { label: "THROUGHPUT", value: `${selectedNodeData.rpm} RPM`, color: "#00e5a0" },
+                        { label: "ERROR RATE", value: `${selectedNodeData.error_rate}%`, color: selectedNodeData.error_rate > 5 ? "#ff3b5c" : "#00e5a0" },
+                      ].map(m => (
+                        <div key={m.label} style={{ background: "#060c18", padding: "8px", borderRadius: 4, border: "1px solid #1a2a3a" }}>
+                          <div style={{ fontSize: 8, color: "#4a6a8a", marginBottom: 4 }}>{m.label}</div>
+                          <div style={{ fontSize: 13, color: m.color, fontWeight: "bold" }}>{m.value}</div>
+                        </div>
+                      ))}
+                    </div>
                     {[
-                      { label: "THROUGHPUT", value: `${selectedNodeData.rpm} RPM`, color: "#00e5a0" },
-                      { label: "ERROR RATE", value: `${selectedNodeData.error_rate}%`, color: selectedNodeData.error_rate > 5 ? "#ff3b5c" : "#00e5a0" },
+                      { label: "CPU USAGE", value: selectedNodeData.cpu },
+                      { label: "MEM USAGE", value: selectedNodeData.mem },
                     ].map(m => (
-                      <div key={m.label} style={{ background: "#060c18", padding: "8px", borderRadius: 4, border: "1px solid #1a2a3a" }}>
-                        <div style={{ fontSize: 8, color: "#4a6a8a", marginBottom: 4 }}>{m.label}</div>
-                        <div style={{ fontSize: 13, color: m.color, fontWeight: "bold" }}>{m.value}</div>
+                      <div key={m.label} style={{ marginBottom: 6 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#4a6a8a", marginBottom: 2 }}>
+                          <span>{m.label}</span><span>{m.value}%</span>
+                        </div>
+                        <div style={{ height: 3, background: "#0e1e2e", borderRadius: 2, overflow: "hidden" }}>
+                          <div style={{
+                            height: "100%",
+                            width: `${m.value}%`,
+                            background: m.value > 80 ? "#ff3b5c" : m.value > 60 ? "#f5a623" : "#00e5a0",
+                            borderRadius: 2,
+                            transition: "width 0.5s ease",
+                          }} />
+                        </div>
                       </div>
                     ))}
-                  </div>
-                  {[
-                    { label: "CPU USAGE", value: selectedNodeData.cpu },
-                    { label: "MEM USAGE", value: selectedNodeData.mem },
-                  ].map(m => (
-                    <div key={m.label} style={{ marginBottom: 6 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#4a6a8a", marginBottom: 2 }}>
-                        <span>{m.label}</span><span>{m.value}%</span>
+                    <div style={{ fontSize: 9, color: "#4a6a8a", marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        REPLICAS: <span style={{ color: "#c8daf0" }}>{selectedNodeData.replicas}</span>
+                        &nbsp;·&nbsp;TYPE: <span style={{ color: "#c8daf0" }}>{selectedNodeData.type.toUpperCase()}</span>
                       </div>
-                      <div style={{ height: 3, background: "#0e1e2e", borderRadius: 2, overflow: "hidden" }}>
-                        <div style={{
-                          height: "100%",
-                          width: `${m.value}%`,
-                          background: m.value > 80 ? "#ff3b5c" : m.value > 60 ? "#f5a623" : "#00e5a0",
-                          borderRadius: 2,
-                          transition: "width 0.5s ease",
-                        }} />
-                      </div>
-                    </div>
-                  ))}
-                  <div style={{ fontSize: 9, color: "#4a6a8a", marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      REPLICAS: <span style={{ color: "#c8daf0" }}>{selectedNodeData.replicas}</span>
-                      &nbsp;·&nbsp;TYPE: <span style={{ color: "#c8daf0" }}>{selectedNodeData.type.toUpperCase()}</span>
+                      <button
+                        onClick={() => setShowInsights(true)}
+                        style={{ background: "#7b61ff", border: "none", color: "white", padding: "4px 8px", fontSize: 9, borderRadius: 2, cursor: "pointer", letterSpacing: 1 }}
+                      >INSIGHTS</button>
                     </div>
                     <button
-                      onClick={() => setShowInsights(true)}
-                      style={{ background: "#7b61ff", border: "none", color: "white", padding: "4px 8px", fontSize: 9, borderRadius: 2, cursor: "pointer", letterSpacing: 1 }}
-                    >INSIGHTS</button>
+                      onClick={() => { setSelectedNode(null); setShowInsights(false); }}
+                      style={{ position: "absolute", top: 8, right: 10, background: "none", border: "none", color: "#3a5a7a", cursor: "pointer", fontSize: 12 }}
+                    >×</button>
                   </div>
-                  <button
-                    onClick={() => { setSelectedNode(null); setShowInsights(false); }}
-                    style={{ position: "absolute", top: 8, right: 10, background: "none", border: "none", color: "#3a5a7a", cursor: "pointer", fontSize: 12 }}
-                  >×</button>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
 
-            {/* Agent Annotations bar */}
-            <div style={{
-              borderTop: "1px solid #0e1e2e",
-              padding: "8px 16px",
-              background: "#070e1a",
-              maxHeight: 90,
-              overflowY: "auto",
-            }}>
-              <div style={{ fontSize: 9, color: "#3a5a7a", letterSpacing: 2, marginBottom: 6 }}>AGENT ANNOTATIONS</div>
-              {agentAnnotations.map((a, i) => (
-                <div key={i} style={{ display: "flex", gap: 8, marginBottom: 4, alignItems: "flex-start" }}>
-                  <span style={{ fontSize: 9, color: "#3a5a7a", whiteSpace: "nowrap" }}>{a.ts}</span>
-                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#f5a623", flexShrink: 0, marginTop: 1 }} />
-                  <span style={{ fontSize: 10, color: "#8ba0b8" }}>
-                    <span style={{ color: "#c8daf0" }}>{a.id}</span> — {a.text}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* RIGHT — Tabbed Panel (Agent / Insights) */}
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "#050b14" }}>
-
-            {/* Tab Bar */}
-            <div style={{
-              display: "flex",
-              borderBottom: "1px solid #0e1e2e",
-              background: "#070e1a",
-            }}>
-              {([
-                { key: "agent" as const, label: "STRANDS AGENT", icon: <ActivitySquare size={11} /> },
-                { key: "insights" as const, label: "INSIGHTS ENGINE", icon: <Lightbulb size={11} /> },
-              ]).map(tab => (
-                <button
-                  key={tab.key}
-                  onClick={() => setRightTab(tab.key)}
-                  style={{
-                    flex: 1,
-                    padding: "10px 18px",
-                    fontSize: 10,
-                    letterSpacing: 2,
-                    border: "none",
-                    borderBottom: rightTab === tab.key ? "2px solid #7b61ff" : "2px solid transparent",
-                    background: "transparent",
-                    color: rightTab === tab.key ? "#c8daf0" : "#3a5a7a",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 6,
-                    fontFamily: "'DM Mono', monospace",
-                  }}
-                >
-                  {tab.icon} {tab.label}
-                  {tab.key === "insights" && allInsights.filter(i => i.status === "open").length > 0 && (
-                    <span style={{
-                      background: "#ff3b5c",
-                      color: "#fff",
-                      fontSize: 8,
-                      padding: "1px 5px",
-                      borderRadius: 8,
-                      marginLeft: 4,
-                    }}>
-                      {allInsights.filter(i => i.status === "open").length}
+              {/* Agent Annotations bar */}
+              <div style={{
+                borderTop: "1px solid #0e1e2e",
+                padding: "8px 16px",
+                background: "#070e1a",
+                maxHeight: 90,
+                overflowY: "auto",
+              }}>
+                <div style={{ fontSize: 9, color: "#3a5a7a", letterSpacing: 2, marginBottom: 6 }}>AGENT ANNOTATIONS</div>
+                {agentAnnotations.map((a, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, marginBottom: 4, alignItems: "flex-start" }}>
+                    <span style={{ fontSize: 9, color: "#3a5a7a", whiteSpace: "nowrap" }}>{a.ts}</span>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#f5a623", flexShrink: 0, marginTop: 1 }} />
+                    <span style={{ fontSize: 10, color: "#8ba0b8" }}>
+                      <span style={{ color: "#c8daf0" }}>{a.id}</span> — {a.text}
                     </span>
-                  )}
-                </button>
-              ))}
+                  </div>
+                ))}
+              </div>
             </div>
 
-            {/* Agent Tab Content */}
-            {rightTab === "agent" && (
-              <>
-                <div style={{
-                  padding: "10px 18px",
-                  fontSize: 10,
-                  color: "#3a5a7a",
-                  letterSpacing: 2,
-                  borderBottom: "1px solid #0e1e2e",
-                  display: "flex",
-                  justifyContent: "space-between"
-                }}>
-                  <span>MINIMAX M2.5</span>
-                  <span style={{ color: apiStatus === "connected" ? "#00e5a0" : "#f5a623", display: "flex", alignItems: "center", gap: 6 }}>
-                    {apiStatus === "connected" ? <ActivitySquare size={12} /> : <ServerCrash size={12} />}
-                    {apiStatus === "connected" ? "ONLINE" : "CONNECTING"}
-                  </span>
-                </div>
+            {/* RIGHT — Tabbed Panel (Agent / Insights) */}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "#050b14" }}>
 
-                <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-                  {/* Left Column of Right Panel (Remediation + TestSprite) */}
-                  <div style={{ flex: "0 0 35%", borderRight: "1px solid #0e1e2e", display: "flex", flexDirection: "column" }}>
-                    {/* Test Sprite Panel */}
-                    <div style={{ borderBottom: "1px solid #0e1e2e", padding: 16 }}>
-                      <div style={{ fontSize: 9, color: "#3a5a7a", letterSpacing: 2, marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
-                        <ShieldAlert size={12} color="#7b61ff" /> TESTSPRITE VALIDATION
-                      </div>
-                      <div style={{
-                        background: validationResult.passed ? "#00e5a011" : "#ff3b5c11",
-                        border: `1px solid ${validationResult.passed ? "#00e5a0" : "#ff3b5c"}44`,
-                        padding: 12,
-                        borderRadius: 4
+              {/* Tab Bar */}
+              <div style={{
+                display: "flex",
+                borderBottom: "1px solid #0e1e2e",
+                background: "#070e1a",
+              }}>
+                {([
+                  { key: "agent" as const, label: "AGENT", icon: <ActivitySquare size={11} /> },
+                  { key: "insights" as const, label: "INSIGHTS", icon: <Lightbulb size={11} /> },
+                  { key: "scaling" as const, label: "SCALING", icon: <BarChart3 size={11} /> },
+                ]).map(tab => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setRightTab(tab.key)}
+                    style={{
+                      flex: 1,
+                      padding: "10px 18px",
+                      fontSize: 10,
+                      letterSpacing: 2,
+                      border: "none",
+                      borderBottom: rightTab === tab.key ? "2px solid #7b61ff" : "2px solid transparent",
+                      background: "transparent",
+                      color: rightTab === tab.key ? "#c8daf0" : "#3a5a7a",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                      fontFamily: "'DM Mono', monospace",
+                    }}
+                  >
+                    {tab.icon} {tab.label}
+                    {tab.key === "insights" && allInsights.filter(i => i.status === "open").length > 0 && (
+                      <span style={{
+                        background: "#ff3b5c",
+                        color: "#fff",
+                        fontSize: 8,
+                        padding: "1px 5px",
+                        borderRadius: 8,
+                        marginLeft: 4,
                       }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, color: validationResult.passed ? "#00e5a0" : "#ff3b5c", fontSize: 11, marginBottom: 4 }}>
-                          {validationResult.passed ? <CheckCircle2 size={14} /> : <ServerCrash size={14} />}
-                          {validationResult.passed ? "PASSING" : "FAILING"}
+                        {allInsights.filter(i => i.status === "open").length}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+
+              {/* Agent Tab Content */}
+              {rightTab === "agent" && (
+                <>
+                  {/* Dual-Model Status Bar */}
+                  <div style={{
+                    padding: "8px 18px",
+                    fontSize: 10,
+                    color: "#3a5a7a",
+                    letterSpacing: 2,
+                    borderBottom: "1px solid #0e1e2e",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    background: "#070e1a",
+                  }}>
+                    <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#00e5a0", display: "inline-block", boxShadow: "0 0 6px #00e5a0" }} />
+                        <span style={{ color: "#c8daf0" }}>CLAUDE</span>
+                        <span style={{ color: "#4a6a8a", fontSize: 8 }}>ORCHESTRATOR</span>
+                      </div>
+                      <div style={{ width: 1, height: 16, background: "#1a2a3a" }} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: apiStatus === "connected" ? "#7b61ff" : "#f5a623", display: "inline-block", boxShadow: `0 0 6px ${apiStatus === "connected" ? "#7b61ff" : "#f5a623"}` }} />
+                        <span style={{ color: "#c8daf0" }}>MINIMAX M2.5</span>
+                        <span style={{ color: "#4a6a8a", fontSize: 8 }}>BACKGROUND</span>
+                      </div>
+                    </div>
+                    <span style={{ color: apiStatus === "connected" ? "#00e5a0" : "#f5a623", display: "flex", alignItems: "center", gap: 6 }}>
+                      {apiStatus === "connected" ? <ActivitySquare size={12} /> : <ServerCrash size={12} />}
+                      {apiStatus === "connected" ? "ONLINE" : "CONNECTING"}
+                    </span>
+                  </div>
+
+                  <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+                    {/* Left Column: TestSprite + MiniMax Insights + Remediation */}
+                    <div style={{ flex: "0 0 38%", borderRight: "1px solid #0e1e2e", display: "flex", flexDirection: "column" }}>
+
+                      {/* TestSprite Panel — Expanded */}
+                      <div style={{ borderBottom: "1px solid #0e1e2e", padding: 14 }}>
+                        <div style={{ fontSize: 9, color: "#3a5a7a", letterSpacing: 2, marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <ShieldAlert size={12} color="#7b61ff" /> TESTSPRITE VALIDATION
+                          </span>
+                          <button
+                            onClick={handleRunValidation}
+                            style={{
+                              background: "#7b61ff22", border: "1px solid #7b61ff44", color: "#7b61ff",
+                              padding: "2px 8px", fontSize: 8, borderRadius: 2, cursor: "pointer",
+                              fontFamily: "'DM Mono', monospace", letterSpacing: 1,
+                            }}
+                          >
+                            <Play size={8} style={{ display: "inline", verticalAlign: "middle" }} /> RUN
+                          </button>
                         </div>
-                        <div style={{ fontSize: 10, color: "#8ba0b8" }}>
-                          {validationResult.service}: {validationResult.msg}
+                        <div style={{
+                          background: validationResult.passed ? "#00e5a011" : "#ff3b5c11",
+                          border: `1px solid ${validationResult.passed ? "#00e5a0" : "#ff3b5c"}44`,
+                          padding: 10,
+                          borderRadius: 4,
+                          marginBottom: 8,
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, color: validationResult.passed ? "#00e5a0" : "#ff3b5c", fontSize: 11, marginBottom: 4 }}>
+                            {validationResult.passed ? <CheckCircle2 size={14} /> : <ServerCrash size={14} />}
+                            {validationResult.passed ? "ALL ENDPOINTS PASSING" : "VALIDATION FAILING"}
+                          </div>
+                          <div style={{ fontSize: 10, color: "#8ba0b8" }}>
+                            {validationResult.service}: {validationResult.msg}
+                          </div>
                         </div>
+                        {/* Validation endpoint breakdown */}
+                        {validationResults.length > 0 && (
+                          <div style={{ fontSize: 9 }}>
+                            {validationResults.slice(-1).map((v: any) => (
+                              <div key={v.validation_id}>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 40px 50px", gap: 2, marginBottom: 4 }}>
+                                  {(v.details || []).map((d: any, j: number) => (
+                                    <div key={j} style={{ display: "contents" }}>
+                                      <span style={{ color: "#8ba0b8" }}>{d.name || d.endpoint}</span>
+                                      <span style={{ textAlign: "center", color: d.passed ? "#00e5a0" : "#ff3b5c" }}>{d.passed ? "✓ OK" : "✗ FAIL"}</span>
+                                      <span style={{ textAlign: "right", color: "#4a6a8a" }}>{d.latency_ms}ms</span>
+                                    </div>
+                                  ))}
+                                </div>
+                                {v.testsprite_results && (
+                                  <div style={{ color: "#7b61ff", fontSize: 8, marginTop: 4 }}>
+                                    TestSprite: {v.testsprite_results.tests_passed}/{v.testsprite_results.tests_generated} passed · {v.testsprite_results.coverage_percent}% coverage
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Live Agent Activity Feed */}
+                      <div style={{ padding: 14, flex: 1, overflowY: "auto" }}>
+                        <div style={{ fontSize: 9, color: "#7b61ff", letterSpacing: 2, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                          <Lightbulb size={10} /> LIVE AGENT ACTIVITY
+                          {agentActivity.length > 0 && (
+                            <span style={{ background: "#7b61ff33", padding: "0 6px", borderRadius: 8, fontSize: 8, color: "#7b61ff" }}>{agentActivity.length}</span>
+                          )}
+                        </div>
+                        {agentActivity.length === 0 && allInsights.length === 0 ? (
+                          <div style={{ fontSize: 10, color: "#4a6a8a", fontStyle: "italic" }}>Agent will show live activity here when you chat or trigger analysis...</div>
+                        ) : (
+                          <>
+                            {/* Show stored insights first */}
+                            {allInsights.slice(0, 5).map((ins: any, i: number) => (
+                              <div key={`ins-${i}`} style={{ borderLeft: `2px solid ${ins.severity === 'critical' ? '#ff3b5c' : ins.severity === 'high' ? '#f5a623' : '#7b61ff'}`, paddingLeft: 8, marginBottom: 8 }}>
+                                <div style={{ fontSize: 10, color: "#c8daf0", marginBottom: 2 }}>
+                                  <span style={{ background: ins.category === 'optimization' ? '#7b61ff33' : '#00e5a022', padding: "0 4px", borderRadius: 2, fontSize: 7, marginRight: 4, color: ins.category === 'optimization' ? '#7b61ff' : '#00e5a0' }}>
+                                    {ins.category === 'optimization' ? 'MINIMAX' : ins.category?.toUpperCase() || 'INSIGHT'}
+                                  </span>
+                                  <span style={{ background: '#1a2a3a', padding: "0 4px", borderRadius: 2, fontSize: 7, marginRight: 4, color: ins.severity === 'critical' ? '#ff3b5c' : ins.severity === 'high' ? '#f5a623' : '#4a6a8a' }}>
+                                    {(ins.severity || 'info').toUpperCase()}
+                                  </span>
+                                  {ins.title}
+                                </div>
+                                <div style={{ fontSize: 9, color: "#6a8aa0", lineHeight: 1.3 }}>{(ins.insight || "").slice(0, 120)}{ins.insight?.length > 120 ? '...' : ''}</div>
+                              </div>
+                            ))}
+                            {/* Show live tool calls / activity */}
+                            {agentActivity.map((act: any) => (
+                              <div key={act.id} style={{ borderLeft: `2px solid ${act.event_type === 'error' ? '#ff3b5c' : act.event_type === 'insight_stored' ? '#00e5a0' : act.event_type === 'tool_call' ? '#3a5a7a' : '#7b61ff'}`, paddingLeft: 8, marginBottom: 6 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 1 }}>
+                                  <span style={{ fontSize: 8, color: act.event_type === 'tool_call' ? '#3a5a7a' : '#7b61ff', letterSpacing: 1 }}>
+                                    {act.event_type === 'tool_call' ? '⚡ TOOL' : act.event_type === 'insight_stored' ? '💡 INSIGHT' : act.event_type === 'analysis' ? '🔍 ANALYSIS' : act.event_type === 'error' ? '⚠ ERROR' : '📊 EVENT'}
+                                  </span>
+                                  <span style={{ fontSize: 7, color: "#3a5a7a" }}>{act.ts ? new Date(act.ts * 1000).toLocaleTimeString() : ''}</span>
+                                </div>
+                                <div style={{ fontSize: 10, color: "#c8daf0" }}>{act.summary}</div>
+                                {act.detail && <div style={{ fontSize: 8, color: "#4a6a8a", lineHeight: 1.2, marginTop: 1 }}>{act.detail.slice(0, 100)}{act.detail.length > 100 ? '...' : ''}</div>}
+                              </div>
+                            ))}
+                          </>
+                        )}
                       </div>
                     </div>
 
-                    {/* Remediation Feed */}
-                    <div style={{ padding: 16, flex: 1, overflowY: "auto" }}>
-                      <div style={{ fontSize: 9, color: "#3a5a7a", letterSpacing: 2, marginBottom: 12 }}>
-                        REMEDIATION ACTION LOG
+                    {/* CopilotKit Chat UI — embedded inline */}
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", position: "relative", minHeight: 0 }}>
+                      <style dangerouslySetInnerHTML={{
+                        __html: `
+                     .copilotKitChat { height: 100% !important; border: none !important; border-radius: 0 !important; background: transparent !important; font-family: 'DM Mono', monospace !important; }
+                     .copilotKitMessages { padding: 12px !important; font-size: 11px !important; }
+                     .copilotKitMessage { font-family: 'DM Mono', monospace !important; font-size: 11px !important; background: #080f1c !important; border: 1px solid #0e1e2e !important; color: #c8daf0 !important; border-radius: 6px !important; padding: 8px 12px !important; margin-bottom: 8px !important; }
+                     .copilotKitUserMessage { background: #0a1828 !important; border-color: #1a2a3a !important; color: #8ba0b8 !important; }
+                     .copilotKitInput, .copilotKitInput textarea { background: #070e1a !important; border: 1px solid #0e1e2e !important; border-radius: 8px !important; font-family: 'DM Mono', monospace !important; font-size: 11px !important; color: #c8daf0 !important; }
+                     .copilotKitInput textarea::placeholder { color: #3a5a7a !important; }
+                     .copilotKitHeader { display: none !important; }
+                     .copilotKitResponseButton { display: none !important; }
+                   `}} />
+                      {/* @ts-ignore */}
+                      <CopilotChat
+                        labels={{ initial: "Agent online — ask about cluster health, service metrics, or anomalies." }}
+                        className="copilotKitChat"
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Insights Tab Content */}
+              {rightTab === "insights" && (
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+                  {/* Insights Header Bar */}
+                  <div style={{
+                    padding: "10px 18px",
+                    fontSize: 10,
+                    color: "#3a5a7a",
+                    letterSpacing: 2,
+                    borderBottom: "1px solid #0e1e2e",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}>
+                    <span>PERSISTENT MEMORY — {allInsights.length} INSIGHTS · {allPatterns.length} PATTERNS</span>
+                    <button
+                      onClick={() => handleGenerateInsights()}
+                      disabled={generatingInsights}
+                      style={{
+                        background: generatingInsights ? "#1a2a3a" : "#7b61ff",
+                        border: "none",
+                        color: "#fff",
+                        padding: "4px 12px",
+                        fontSize: 9,
+                        borderRadius: 2,
+                        cursor: generatingInsights ? "wait" : "pointer",
+                        letterSpacing: 1,
+                        fontFamily: "'DM Mono', monospace",
+                      }}
+                    >
+                      {generatingInsights ? "GENERATING..." : "GENERATE INSIGHTS"}
+                    </button>
+                  </div>
+
+                  <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+
+                    {/* Left: Insights List */}
+                    <div style={{ flex: "0 0 55%", borderRight: "1px solid #0e1e2e", overflowY: "auto" }}>
+
+                      {/* Recommendations Section */}
+                      {allRecommendations.length > 0 && (
+                        <div style={{ borderBottom: "1px solid #0e1e2e" }}>
+                          <div style={{ padding: "10px 16px", background: "#0a1520", fontSize: 9, color: "#f5a623", letterSpacing: 1, display: "flex", alignItems: "center", gap: 6 }}>
+                            <TrendingUp size={10} /> TOP RECOMMENDATIONS
+                          </div>
+                          {allRecommendations.slice(0, 3).map((rec, i) => (
+                            <div key={i} style={{
+                              padding: "10px 16px",
+                              borderBottom: "1px solid #0e1e2e08",
+                              background: "#ff3b5c08",
+                            }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                                <span style={{ fontSize: 11, color: "#c8daf0" }}>{rec.title}</span>
+                                <span style={{
+                                  fontSize: 8,
+                                  padding: "1px 6px",
+                                  borderRadius: 2,
+                                  background: rec.severity === "critical" ? "#ff3b5c22" : "#f5a62322",
+                                  color: rec.severity === "critical" ? "#ff3b5c" : "#f5a623",
+                                  letterSpacing: 1,
+                                }}>
+                                  {(rec.severity || "").toUpperCase()}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: 10, color: "#8ba0b8", marginBottom: 4 }}>{rec.service}</div>
+                              <div style={{ fontSize: 10, color: "#00e5a0" }}>{rec.recommendation}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* All Insights */}
+                      <div style={{ padding: "10px 16px", background: "#060c18", fontSize: 9, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #0e1e2e" }}>
+                        RECENT INSIGHTS
                       </div>
-                      {remediationFeed.length === 0 ? (
-                        <div style={{ fontSize: 10, color: "#4a6a8a", fontStyle: "italic" }}>No recent actions...</div>
+                      {insightsLoading && allInsights.length === 0 ? (
+                        <div style={{ padding: 20, fontSize: 10, color: "#4a6a8a", textAlign: "center" }}>Loading insights...</div>
+                      ) : allInsights.length === 0 ? (
+                        <div style={{ padding: 20, fontSize: 10, color: "#4a6a8a", textAlign: "center" }}>
+                          No insights yet. Click "Generate Insights" to start.
+                        </div>
                       ) : (
-                        remediationFeed.map((action, i) => (
-                          <div key={i} style={{
-                            borderLeft: "2px solid #7b61ff",
-                            paddingLeft: 10,
-                            marginBottom: 12
+                        allInsights.map((ins, i) => {
+                          const sevColor = ins.severity === "critical" ? "#ff3b5c" :
+                            ins.severity === "high" ? "#f5a623" :
+                              ins.severity === "medium" ? "#7b61ff" : "#3a5a7a";
+                          return (
+                            <div key={ins.id || i} style={{
+                              padding: "10px 16px",
+                              borderBottom: "1px solid #0e1e2e",
+                              borderLeft: `3px solid ${sevColor}`,
+                              opacity: ins.status === "resolved" ? 0.5 : 1,
+                            }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                                <span style={{ fontSize: 11, color: "#c8daf0" }}>{ins.title}</span>
+                                <span style={{
+                                  fontSize: 8,
+                                  padding: "1px 6px",
+                                  borderRadius: 2,
+                                  background: `${sevColor}22`,
+                                  color: sevColor,
+                                  letterSpacing: 1,
+                                }}>
+                                  {(ins.severity || "").toUpperCase()}
+                                </span>
+                              </div>
+                              <div style={{ fontSize: 10, color: "#8ba0b8", marginBottom: 4 }}>
+                                {ins.service} · {ins.category} · <span style={{ color: ins.status === "open" ? "#f5a623" : ins.status === "acknowledged" ? "#7b61ff" : "#00e5a0" }}>{ins.status}</span>
+                              </div>
+                              <div style={{ fontSize: 10, color: "#6a8aa0", marginBottom: 6, lineHeight: 1.4 }}>{ins.insight}</div>
+                              {ins.status === "open" && (
+                                <div style={{ display: "flex", gap: 8 }}>
+                                  <button
+                                    onClick={() => handleAcknowledgeInsight(ins.id)}
+                                    style={{ background: "none", border: "1px solid #7b61ff44", color: "#7b61ff", padding: "2px 8px", fontSize: 8, borderRadius: 2, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontFamily: "'DM Mono', monospace" }}
+                                  >
+                                    <Eye size={8} /> ACK
+                                  </button>
+                                  <button
+                                    onClick={() => handleResolveInsight(ins.id)}
+                                    style={{ background: "none", border: "1px solid #00e5a044", color: "#00e5a0", padding: "2px 8px", fontSize: 8, borderRadius: 2, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontFamily: "'DM Mono', monospace" }}
+                                  >
+                                    <CheckCheck size={8} /> RESOLVE
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Right: Patterns */}
+                    <div style={{ flex: 1, overflowY: "auto" }}>
+                      <div style={{ padding: "10px 16px", background: "#060c18", fontSize: 9, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #0e1e2e" }}>
+                        DETECTED PATTERNS
+                      </div>
+                      {allPatterns.length === 0 ? (
+                        <div style={{ padding: 20, fontSize: 10, color: "#4a6a8a", textAlign: "center" }}>
+                          No patterns detected yet.
+                        </div>
+                      ) : (
+                        allPatterns.map((pat, i) => (
+                          <div key={pat.id || i} style={{
+                            padding: "10px 16px",
+                            borderBottom: "1px solid #0e1e2e",
                           }}>
-                            <div style={{ fontSize: 9, color: "#7b61ff", marginBottom: 2 }}>{action.timestamp || "Just now"}</div>
-                            <div style={{ fontSize: 11, color: "#c8daf0", marginBottom: 2 }}>{action.action_type.toUpperCase()} <span style={{ color: "#8ba0b8" }}>on</span> {action.service}</div>
-                            <div style={{ fontSize: 10, color: "#00e5a0" }}>{action.result}</div>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                              <span style={{
+                                fontSize: 8,
+                                padding: "1px 6px",
+                                borderRadius: 2,
+                                background: "#7b61ff22",
+                                color: "#7b61ff",
+                                letterSpacing: 1,
+                              }}>
+                                {(pat.type || "pattern").toUpperCase().replace(/_/g, " ")}
+                              </span>
+                              <span style={{ fontSize: 9, color: "#4a6a8a" }}>
+                                {pat.service || pat.scope || ""}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 10, color: "#c8daf0", marginBottom: 4, lineHeight: 1.4 }}>{pat.description}</div>
+                            <div style={{ display: "flex", gap: 12, fontSize: 9, color: "#4a6a8a" }}>
+                              <span>Confidence: <span style={{ color: pat.confidence > 0.8 ? "#00e5a0" : "#f5a623" }}>{((pat.confidence || 0) * 100).toFixed(0)}%</span></span>
+                              {pat.occurrences && <span>Seen: <span style={{ color: "#8ba0b8" }}>{pat.occurrences}x</span></span>}
+                            </div>
+                            {pat.recommendation && (
+                              <div style={{ fontSize: 10, color: "#00e5a0", marginTop: 4 }}>{pat.recommendation}</div>
+                            )}
                           </div>
                         ))
+                      )}
+
+                      {/* Global Patterns section */}
+                      {allPatterns.filter(p => p.scope === "global").length > 0 && (
+                        <>
+                          <div style={{ padding: "10px 16px", background: "#060c18", fontSize: 9, color: "#f5a623", letterSpacing: 1, borderBottom: "1px solid #0e1e2e", display: "flex", alignItems: "center", gap: 6 }}>
+                            <AlertTriangle size={10} /> CROSS-SERVICE PATTERNS
+                          </div>
+                          {allPatterns.filter(p => p.scope === "global").map((gpat, i) => (
+                            <div key={gpat.id || i} style={{ padding: "10px 16px", borderBottom: "1px solid #0e1e2e" }}>
+                              <div style={{ fontSize: 10, color: "#c8daf0", marginBottom: 4 }}>{gpat.description}</div>
+                              {gpat.services_involved && (
+                                <div style={{ fontSize: 9, color: "#8ba0b8" }}>Services: {gpat.services_involved.join(", ")}</div>
+                              )}
+                              {gpat.mitigation && (
+                                <div style={{ fontSize: 10, color: "#00e5a0", marginTop: 4 }}>{gpat.mitigation}</div>
+                              )}
+                            </div>
+                          ))}
+                        </>
                       )}
                     </div>
                   </div>
 
-                  {/* CopilotKit Chat UI */}
-                  <div style={{ flex: 1, position: "relative" }}>
-                    <style dangerouslySetInnerHTML={{
-                      __html: `
-                     .copilotKitButton { display: none !important; }
-                     .copilotKitSidebar { width: 100% !important; min-width: 100% !important; height: 100% !important; background: transparent !important; }
-                     .copilotKitPopup { width: 100% !important; background: transparent !important; border: none !important; box-shadow: none !important; }
-                     .copilotKitMessages { padding: 16px !important; }
-                     .copilotKitMessage { font-family: 'DM Mono', monospace !important; font-size: 11px !important; background: #080f1c !important; border: 1px solid #0e1e2e !important; color: #c8daf0 !important; }
-                     .copilotKitUserMessage { background: #0a1520 !important; border: 1px solid #1a2a3a !important; color: #8ba0b8 !important; }
-                     .copilotKitInput { background: #070e1a !important; border-top: 1px solid #0e1e2e !important; font-family: 'DM Mono', monospace !important; color: #c8daf0 !important; }
-                   `}} />
-                    <CopilotSidebar
-                      defaultOpen={true}
-                      clickOutsideToClose={false}
-                      labels={{ title: "", initial: "Agent is online. How can I help resolve cluster anomalies?" }}
-                    />
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* Insights Tab Content */}
-            {rightTab === "insights" && (
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-
-                {/* Insights Header Bar */}
-                <div style={{
-                  padding: "10px 18px",
-                  fontSize: 10,
-                  color: "#3a5a7a",
-                  letterSpacing: 2,
-                  borderBottom: "1px solid #0e1e2e",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}>
-                  <span>PERSISTENT MEMORY — {allInsights.length} INSIGHTS · {allPatterns.length} PATTERNS</span>
-                  <button
-                    onClick={() => handleGenerateInsights()}
-                    disabled={generatingInsights}
-                    style={{
-                      background: generatingInsights ? "#1a2a3a" : "#7b61ff",
-                      border: "none",
-                      color: "#fff",
-                      padding: "4px 12px",
-                      fontSize: 9,
-                      borderRadius: 2,
-                      cursor: generatingInsights ? "wait" : "pointer",
-                      letterSpacing: 1,
-                      fontFamily: "'DM Mono', monospace",
-                    }}
-                  >
-                    {generatingInsights ? "GENERATING..." : "GENERATE INSIGHTS"}
-                  </button>
-                </div>
-
-                <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-
-                  {/* Left: Insights List */}
-                  <div style={{ flex: "0 0 55%", borderRight: "1px solid #0e1e2e", overflowY: "auto" }}>
-
-                    {/* Recommendations Section */}
-                    {allRecommendations.length > 0 && (
-                      <div style={{ borderBottom: "1px solid #0e1e2e" }}>
-                        <div style={{ padding: "10px 16px", background: "#0a1520", fontSize: 9, color: "#f5a623", letterSpacing: 1, display: "flex", alignItems: "center", gap: 6 }}>
-                          <TrendingUp size={10} /> TOP RECOMMENDATIONS
-                        </div>
-                        {allRecommendations.slice(0, 3).map((rec, i) => (
-                          <div key={i} style={{
-                            padding: "10px 16px",
-                            borderBottom: "1px solid #0e1e2e08",
-                            background: "#ff3b5c08",
-                          }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                              <span style={{ fontSize: 11, color: "#c8daf0" }}>{rec.title}</span>
-                              <span style={{
-                                fontSize: 8,
-                                padding: "1px 6px",
-                                borderRadius: 2,
-                                background: rec.severity === "critical" ? "#ff3b5c22" : "#f5a62322",
-                                color: rec.severity === "critical" ? "#ff3b5c" : "#f5a623",
-                                letterSpacing: 1,
-                              }}>
-                                {(rec.severity || "").toUpperCase()}
-                              </span>
-                            </div>
-                            <div style={{ fontSize: 10, color: "#8ba0b8", marginBottom: 4 }}>{rec.service}</div>
-                            <div style={{ fontSize: 10, color: "#00e5a0" }}>{rec.recommendation}</div>
-                          </div>
-                        ))}
+                  {/* Cluster Agent Panel — bottom strip */}
+                  <div style={{
+                    borderTop: "1px solid #0e1e2e",
+                    background: "#070e1a",
+                    padding: "8px 16px",
+                    maxHeight: 200,
+                    overflowY: "auto",
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <div style={{ fontSize: 9, color: "#3a5a7a", letterSpacing: 2, display: "flex", alignItems: "center", gap: 6 }}>
+                        <Network size={10} color="#7b61ff" /> MAPE-K CLUSTER — {clusterStatus?.total_replicas || 1} AGENT{(clusterStatus?.total_replicas || 1) > 1 ? "S" : ""}
+                        <span style={{ color: "#4a6a8a" }}>·</span>
+                        <span style={{ color: "#8ba0b8" }}>{clusterStatus?.pending_work_items || 0} queued</span>
+                        <span style={{ color: "#4a6a8a" }}>·</span>
+                        <span style={{ color: "#8ba0b8" }}>{clusterStatus?.completed_analyses || 0} done</span>
                       </div>
-                    )}
-
-                    {/* All Insights */}
-                    <div style={{ padding: "10px 16px", background: "#060c18", fontSize: 9, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #0e1e2e" }}>
-                      RECENT INSIGHTS
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button
+                          onClick={handleMapeKTick}
+                          style={{
+                            background: "none", border: "1px solid #7b61ff44", color: "#7b61ff",
+                            padding: "2px 8px", fontSize: 8, borderRadius: 2, cursor: "pointer",
+                            fontFamily: "'DM Mono', monospace", letterSpacing: 1,
+                          }}
+                        >
+                          TICK
+                        </button>
+                        <button
+                          onClick={handleSimulateLoad}
+                          disabled={simulatingLoad}
+                          style={{
+                            background: simulatingLoad ? "#1a2a3a" : "#ff3b5c22",
+                            border: "1px solid #ff3b5c44", color: "#ff3b5c",
+                            padding: "2px 8px", fontSize: 8, borderRadius: 2,
+                            cursor: simulatingLoad ? "wait" : "pointer",
+                            fontFamily: "'DM Mono', monospace", letterSpacing: 1,
+                          }}
+                        >
+                          {simulatingLoad ? "SIMULATING..." : "SIMULATE LOAD"}
+                        </button>
+                      </div>
                     </div>
-                    {insightsLoading && allInsights.length === 0 ? (
-                      <div style={{ padding: 20, fontSize: 10, color: "#4a6a8a", textAlign: "center" }}>Loading insights...</div>
-                    ) : allInsights.length === 0 ? (
-                      <div style={{ padding: 20, fontSize: 10, color: "#4a6a8a", textAlign: "center" }}>
-                        No insights yet. Click "Generate Insights" to start.
-                      </div>
-                    ) : (
-                      allInsights.map((ins, i) => {
-                        const sevColor = ins.severity === "critical" ? "#ff3b5c" :
-                          ins.severity === "high" ? "#f5a623" :
-                            ins.severity === "medium" ? "#7b61ff" : "#3a5a7a";
-                        return (
-                          <div key={ins.id || i} style={{
-                            padding: "10px 16px",
-                            borderBottom: "1px solid #0e1e2e",
-                            borderLeft: `3px solid ${sevColor}`,
-                            opacity: ins.status === "resolved" ? 0.5 : 1,
-                          }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                              <span style={{ fontSize: 11, color: "#c8daf0" }}>{ins.title}</span>
-                              <span style={{
-                                fontSize: 8,
-                                padding: "1px 6px",
-                                borderRadius: 2,
-                                background: `${sevColor}22`,
-                                color: sevColor,
-                                letterSpacing: 1,
-                              }}>
-                                {(ins.severity || "").toUpperCase()}
-                              </span>
-                            </div>
-                            <div style={{ fontSize: 10, color: "#8ba0b8", marginBottom: 4 }}>
-                              {ins.service} · {ins.category} · <span style={{ color: ins.status === "open" ? "#f5a623" : ins.status === "acknowledged" ? "#7b61ff" : "#00e5a0" }}>{ins.status}</span>
-                            </div>
-                            <div style={{ fontSize: 10, color: "#6a8aa0", marginBottom: 6, lineHeight: 1.4 }}>{ins.insight}</div>
-                            {ins.status === "open" && (
-                              <div style={{ display: "flex", gap: 8 }}>
-                                <button
-                                  onClick={() => handleAcknowledgeInsight(ins.id)}
-                                  style={{ background: "none", border: "1px solid #7b61ff44", color: "#7b61ff", padding: "2px 8px", fontSize: 8, borderRadius: 2, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontFamily: "'DM Mono', monospace" }}
-                                >
-                                  <Eye size={8} /> ACK
-                                </button>
-                                <button
-                                  onClick={() => handleResolveInsight(ins.id)}
-                                  style={{ background: "none", border: "1px solid #00e5a044", color: "#00e5a0", padding: "2px 8px", fontSize: 8, borderRadius: 2, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontFamily: "'DM Mono', monospace" }}
-                                >
-                                  <CheckCheck size={8} /> RESOLVE
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
 
-                  {/* Right: Patterns */}
-                  <div style={{ flex: 1, overflowY: "auto" }}>
-                    <div style={{ padding: "10px 16px", background: "#060c18", fontSize: 9, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #0e1e2e" }}>
-                      DETECTED PATTERNS
-                    </div>
-                    {allPatterns.length === 0 ? (
-                      <div style={{ padding: 20, fontSize: 10, color: "#4a6a8a", textAlign: "center" }}>
-                        No patterns detected yet.
-                      </div>
-                    ) : (
-                      allPatterns.map((pat, i) => (
-                        <div key={pat.id || i} style={{
-                          padding: "10px 16px",
-                          borderBottom: "1px solid #0e1e2e",
+                    {/* Agent replica tiles */}
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {(clusterStatus?.replicas || []).map((replica: any) => (
+                        <div key={replica.replica_id} style={{
+                          background: "#0a111c",
+                          border: `1px solid ${replica.status === "running" ? "#00e5a044" : "#ff3b5c44"}`,
+                          borderRadius: 4,
+                          padding: "6px 10px",
+                          minWidth: 140,
+                          flex: "0 0 auto",
                         }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                            <span style={{ fontSize: 10, color: "#c8daf0", display: "flex", alignItems: "center", gap: 4 }}>
+                              <Cpu size={9} color="#7b61ff" /> {replica.name}
+                            </span>
                             <span style={{
-                              fontSize: 8,
-                              padding: "1px 6px",
-                              borderRadius: 2,
-                              background: "#7b61ff22",
-                              color: "#7b61ff",
-                              letterSpacing: 1,
-                            }}>
-                              {(pat.type || "pattern").toUpperCase().replace(/_/g, " ")}
-                            </span>
-                            <span style={{ fontSize: 9, color: "#4a6a8a" }}>
-                              {pat.service || pat.scope || ""}
-                            </span>
+                              width: 6, height: 6, borderRadius: "50%",
+                              background: replica.status === "running" ? "#00e5a0" : "#ff3b5c",
+                              display: "inline-block",
+                            }} />
                           </div>
-                          <div style={{ fontSize: 10, color: "#c8daf0", marginBottom: 4, lineHeight: 1.4 }}>{pat.description}</div>
-                          <div style={{ display: "flex", gap: 12, fontSize: 9, color: "#4a6a8a" }}>
-                            <span>Confidence: <span style={{ color: pat.confidence > 0.8 ? "#00e5a0" : "#f5a623" }}>{((pat.confidence || 0) * 100).toFixed(0)}%</span></span>
-                            {pat.occurrences && <span>Seen: <span style={{ color: "#8ba0b8" }}>{pat.occurrences}x</span></span>}
+                          <div style={{ fontSize: 9, color: "#4a6a8a", marginBottom: 2 }}>
+                            svcs: <span style={{ color: "#8ba0b8" }}>{replica.assigned_services?.length || 0}</span>
+                            {" "}· done: <span style={{ color: "#8ba0b8" }}>{replica.analyses_completed}</span>
                           </div>
-                          {pat.recommendation && (
-                            <div style={{ fontSize: 10, color: "#00e5a0", marginTop: 4 }}>{pat.recommendation}</div>
+                          {/* CPU bar */}
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
+                            <span style={{ fontSize: 8, color: "#4a6a8a", width: 22 }}>CPU</span>
+                            <div style={{ flex: 1, height: 3, background: "#0e1e2e", borderRadius: 2, overflow: "hidden" }}>
+                              <div style={{
+                                height: "100%",
+                                width: `${replica.cpu_load || 0}%`,
+                                background: (replica.cpu_load || 0) > 80 ? "#ff3b5c" : (replica.cpu_load || 0) > 50 ? "#f5a623" : "#00e5a0",
+                                borderRadius: 2,
+                              }} />
+                            </div>
+                            <span style={{ fontSize: 8, color: "#8ba0b8", width: 28, textAlign: "right" }}>{(replica.cpu_load || 0).toFixed(0)}%</span>
+                          </div>
+                          {replica.current_task && (
+                            <div style={{ fontSize: 8, color: "#f5a623", display: "flex", alignItems: "center", gap: 4 }}>
+                              <Zap size={8} /> {replica.current_task}
+                            </div>
                           )}
                         </div>
-                      ))
-                    )}
+                      ))}
+                    </div>
 
-                    {/* Global Patterns section */}
-                    {allPatterns.filter(p => p.scope === "global").length > 0 && (
-                      <>
-                        <div style={{ padding: "10px 16px", background: "#060c18", fontSize: 9, color: "#f5a623", letterSpacing: 1, borderBottom: "1px solid #0e1e2e", display: "flex", alignItems: "center", gap: 6 }}>
-                          <AlertTriangle size={10} /> CROSS-SERVICE PATTERNS
-                        </div>
-                        {allPatterns.filter(p => p.scope === "global").map((gpat, i) => (
-                          <div key={gpat.id || i} style={{ padding: "10px 16px", borderBottom: "1px solid #0e1e2e" }}>
-                            <div style={{ fontSize: 10, color: "#c8daf0", marginBottom: 4 }}>{gpat.description}</div>
-                            {gpat.services_involved && (
-                              <div style={{ fontSize: 9, color: "#8ba0b8" }}>Services: {gpat.services_involved.join(", ")}</div>
-                            )}
-                            {gpat.mitigation && (
-                              <div style={{ fontSize: 10, color: "#00e5a0", marginTop: 4 }}>{gpat.mitigation}</div>
-                            )}
+                    {/* Recent scale events */}
+                    {clusterEvents.length > 0 && (
+                      <div style={{ marginTop: 8 }}>
+                        {clusterEvents.slice(-3).reverse().map((evt, i) => (
+                          <div key={i} style={{ fontSize: 9, color: "#4a6a8a", display: "flex", gap: 6, marginBottom: 2 }}>
+                            <span style={{ color: evt.event === "spawn" ? "#00e5a0" : "#ff3b5c" }}>
+                              {evt.event === "spawn" ? "+" : "-"}
+                            </span>
+                            <span style={{ color: "#8ba0b8" }}>{evt.name}</span>
+                            <span>{evt.reason}</span>
+                            <span style={{ color: "#3a5a7a" }}>({evt.total_replicas} total)</span>
                           </div>
                         ))}
-                      </>
+                      </div>
                     )}
                   </div>
                 </div>
+              )}
 
-                {/* Cluster Agent Panel — bottom strip */}
-                <div style={{
-                  borderTop: "1px solid #0e1e2e",
-                  background: "#070e1a",
-                  padding: "8px 16px",
-                  maxHeight: 200,
-                  overflowY: "auto",
-                }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <div style={{ fontSize: 9, color: "#3a5a7a", letterSpacing: 2, display: "flex", alignItems: "center", gap: 6 }}>
-                      <Network size={10} color="#7b61ff" /> MAPE-K CLUSTER — {clusterStatus?.total_replicas || 1} AGENT{(clusterStatus?.total_replicas || 1) > 1 ? "S" : ""}
+              {/* Scaling Tab Content */}
+              {rightTab === "scaling" && (
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+
+                  {/* Scaling Controls Bar */}
+                  <div style={{
+                    padding: "12px 18px",
+                    borderBottom: "1px solid #0e1e2e",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    background: "#070e1a",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 10, color: "#3a5a7a", letterSpacing: 2 }}>
+                      <Network size={12} color="#7b61ff" />
+                      INSTANCES: <span style={{ fontSize: 18, fontWeight: "bold", color: "#c8daf0" }}>{clusterStatus?.total_replicas || 1}</span>
                       <span style={{ color: "#4a6a8a" }}>·</span>
                       <span style={{ color: "#8ba0b8" }}>{clusterStatus?.pending_work_items || 0} queued</span>
-                      <span style={{ color: "#4a6a8a" }}>·</span>
-                      <span style={{ color: "#8ba0b8" }}>{clusterStatus?.completed_analyses || 0} done</span>
                     </div>
-                    <div style={{ display: "flex", gap: 6 }}>
+                    <div style={{ display: "flex", gap: 8 }}>
                       <button
-                        onClick={handleMapeKTick}
+                        onClick={() => handleManualScale("up")}
+                        disabled={scalingInProgress}
                         style={{
-                          background: "none", border: "1px solid #7b61ff44", color: "#7b61ff",
-                          padding: "2px 8px", fontSize: 8, borderRadius: 2, cursor: "pointer",
+                          background: "#00e5a015", border: "1px solid #00e5a044", color: "#00e5a0",
+                          padding: "6px 14px", fontSize: 10, borderRadius: 4, cursor: "pointer",
                           fontFamily: "'DM Mono', monospace", letterSpacing: 1,
+                          display: "flex", alignItems: "center", gap: 6,
+                          opacity: scalingInProgress ? 0.5 : 1,
                         }}
                       >
-                        TICK
+                        <ArrowUpCircle size={14} /> SCALE UP
+                      </button>
+                      <button
+                        onClick={() => handleManualScale("down")}
+                        disabled={scalingInProgress || (clusterStatus?.total_replicas || 1) <= 1}
+                        style={{
+                          background: "#ff3b5c15", border: "1px solid #ff3b5c44", color: "#ff3b5c",
+                          padding: "6px 14px", fontSize: 10, borderRadius: 4, cursor: "pointer",
+                          fontFamily: "'DM Mono', monospace", letterSpacing: 1,
+                          display: "flex", alignItems: "center", gap: 6,
+                          opacity: scalingInProgress || (clusterStatus?.total_replicas || 1) <= 1 ? 0.5 : 1,
+                        }}
+                      >
+                        <ArrowDownCircle size={14} /> SCALE DOWN
                       </button>
                       <button
                         onClick={handleSimulateLoad}
                         disabled={simulatingLoad}
                         style={{
-                          background: simulatingLoad ? "#1a2a3a" : "#ff3b5c22",
-                          border: "1px solid #ff3b5c44", color: "#ff3b5c",
-                          padding: "2px 8px", fontSize: 8, borderRadius: 2,
-                          cursor: simulatingLoad ? "wait" : "pointer",
+                          background: "#f5a62315", border: "1px solid #f5a62344", color: "#f5a623",
+                          padding: "6px 14px", fontSize: 10, borderRadius: 4, cursor: "pointer",
                           fontFamily: "'DM Mono', monospace", letterSpacing: 1,
+                          display: "flex", alignItems: "center", gap: 6,
                         }}
                       >
-                        {simulatingLoad ? "SIMULATING..." : "SIMULATE LOAD"}
+                        <Zap size={14} /> {simulatingLoad ? "SIMULATING..." : "SIMULATE LOAD"}
+                      </button>
+                      <button
+                        onClick={handleRunValidation}
+                        style={{
+                          background: "#7b61ff15", border: "1px solid #7b61ff44", color: "#7b61ff",
+                          padding: "6px 14px", fontSize: 10, borderRadius: 4, cursor: "pointer",
+                          fontFamily: "'DM Mono', monospace", letterSpacing: 1,
+                          display: "flex", alignItems: "center", gap: 6,
+                        }}
+                      >
+                        <ShieldAlert size={14} /> VALIDATE
                       </button>
                     </div>
                   </div>
 
-                  {/* Agent replica tiles */}
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {(clusterStatus?.replicas || []).map((replica: any) => (
-                      <div key={replica.replica_id} style={{
-                        background: "#0a111c",
-                        border: `1px solid ${replica.status === "running" ? "#00e5a044" : "#ff3b5c44"}`,
-                        borderRadius: 4,
-                        padding: "6px 10px",
-                        minWidth: 140,
-                        flex: "0 0 auto",
-                      }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                          <span style={{ fontSize: 10, color: "#c8daf0", display: "flex", alignItems: "center", gap: 4 }}>
-                            <Cpu size={9} color="#7b61ff" /> {replica.name}
-                          </span>
-                          <span style={{
-                            width: 6, height: 6, borderRadius: "50%",
-                            background: replica.status === "running" ? "#00e5a0" : "#ff3b5c",
-                            display: "inline-block",
-                          }} />
-                        </div>
-                        <div style={{ fontSize: 9, color: "#4a6a8a", marginBottom: 2 }}>
-                          svcs: <span style={{ color: "#8ba0b8" }}>{replica.assigned_services?.length || 0}</span>
-                          {" "}· done: <span style={{ color: "#8ba0b8" }}>{replica.analyses_completed}</span>
-                        </div>
-                        {/* CPU bar */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 2 }}>
-                          <span style={{ fontSize: 8, color: "#4a6a8a", width: 22 }}>CPU</span>
-                          <div style={{ flex: 1, height: 3, background: "#0e1e2e", borderRadius: 2, overflow: "hidden" }}>
-                            <div style={{
-                              height: "100%",
-                              width: `${replica.cpu_load || 0}%`,
-                              background: (replica.cpu_load || 0) > 80 ? "#ff3b5c" : (replica.cpu_load || 0) > 50 ? "#f5a623" : "#00e5a0",
-                              borderRadius: 2,
-                            }} />
+                  <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+
+                    {/* Left: Instance Cards + Timeline */}
+                    <div style={{ flex: "0 0 50%", borderRight: "1px solid #0e1e2e", overflowY: "auto" }}>
+
+                      {/* Instance Cards */}
+                      <div style={{ padding: "12px 16px", background: "#060c18", fontSize: 9, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #0e1e2e" }}>
+                        RUNNING INSTANCES
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: 12 }}>
+                        {(clusterStatus?.replicas || []).map((replica: any) => (
+                          <div key={replica.replica_id} style={{
+                            background: "#0a111c",
+                            border: `1px solid ${replica.status === "running" ? "#00e5a033" : "#ff3b5c33"}`,
+                            borderRadius: 6,
+                            padding: "10px 14px",
+                            minWidth: 180,
+                            flex: "1 1 180px",
+                            backdropFilter: "blur(4px)",
+                          }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                              <span style={{ fontSize: 11, color: "#c8daf0", display: "flex", alignItems: "center", gap: 6 }}>
+                                <Cpu size={12} color="#7b61ff" /> {replica.name}
+                              </span>
+                              <span style={{
+                                width: 8, height: 8, borderRadius: "50%",
+                                background: replica.status === "running" ? "#00e5a0" : "#ff3b5c",
+                                display: "inline-block",
+                                boxShadow: `0 0 6px ${replica.status === "running" ? "#00e5a0" : "#ff3b5c"}`,
+                              }} />
+                            </div>
+                            <div style={{ fontSize: 9, color: "#4a6a8a", marginBottom: 4 }}>
+                              Services: <span style={{ color: "#8ba0b8" }}>{replica.assigned_services?.length || 0}</span>
+                              {" · "}Done: <span style={{ color: "#8ba0b8" }}>{replica.analyses_completed}</span>
+                            </div>
+                            {/* CPU bar */}
+                            <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
+                              <span style={{ fontSize: 8, color: "#4a6a8a", width: 24 }}>CPU</span>
+                              <div style={{ flex: 1, height: 4, background: "#0e1e2e", borderRadius: 2, overflow: "hidden" }}>
+                                <div style={{
+                                  height: "100%",
+                                  width: `${replica.cpu_load || 0}%`,
+                                  background: (replica.cpu_load || 0) > 80 ? "#ff3b5c" : (replica.cpu_load || 0) > 50 ? "#f5a623" : "#00e5a0",
+                                  borderRadius: 2,
+                                  transition: "width 0.5s ease",
+                                }} />
+                              </div>
+                              <span style={{ fontSize: 8, color: "#8ba0b8", width: 28, textAlign: "right" }}>{(replica.cpu_load || 0).toFixed(0)}%</span>
+                            </div>
+                            {replica.current_task && (
+                              <div style={{ fontSize: 8, color: "#f5a623", display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
+                                <Zap size={8} /> {replica.current_task}
+                              </div>
+                            )}
+                            {replica.assigned_services && replica.assigned_services.length > 0 && (
+                              <div style={{ fontSize: 8, color: "#3a5a7a", marginTop: 4, lineHeight: 1.6 }}>
+                                {replica.assigned_services.map((s: string) => (
+                                  <span key={s} style={{ background: "#0e1e2e", padding: "1px 5px", borderRadius: 2, marginRight: 4, display: "inline-block", marginBottom: 2 }}>{s}</span>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          <span style={{ fontSize: 8, color: "#8ba0b8", width: 28, textAlign: "right" }}>{(replica.cpu_load || 0).toFixed(0)}%</span>
-                        </div>
-                        {replica.current_task && (
-                          <div style={{ fontSize: 8, color: "#f5a623", display: "flex", alignItems: "center", gap: 4 }}>
-                            <Zap size={8} /> {replica.current_task}
-                          </div>
+                        ))}
+                      </div>
+
+                      {/* Scale Event Timeline */}
+                      <div style={{ padding: "12px 16px", background: "#060c18", fontSize: 9, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #0e1e2e", borderTop: "1px solid #0e1e2e" }}>
+                        SCALE EVENT TIMELINE
+                      </div>
+                      <div style={{ padding: 12 }}>
+                        {(scaleReport?.instance_timeline || clusterEvents || []).length === 0 ? (
+                          <div style={{ fontSize: 10, color: "#4a6a8a", textAlign: "center", padding: 20 }}>No scale events yet. Click "Simulate Load" to trigger auto-scaling.</div>
+                        ) : (
+                          (scaleReport?.instance_timeline || clusterEvents || []).map((evt: any, i: number) => (
+                            <div key={i} style={{
+                              display: "flex",
+                              alignItems: "flex-start",
+                              gap: 10,
+                              marginBottom: 12,
+                              paddingLeft: 10,
+                              borderLeft: `2px solid ${evt.event === "spawn" ? "#00e5a0" : "#ff3b5c"}`,
+                            }}>
+                              <div style={{
+                                width: 24, height: 24, borderRadius: "50%",
+                                background: evt.event === "spawn" ? "#00e5a015" : "#ff3b5c15",
+                                border: `1px solid ${evt.event === "spawn" ? "#00e5a044" : "#ff3b5c44"}`,
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                flexShrink: 0,
+                              }}>
+                                {evt.event === "spawn" ? <ArrowUpCircle size={12} color="#00e5a0" /> : <ArrowDownCircle size={12} color="#ff3b5c" />}
+                              </div>
+                              <div>
+                                <div style={{ fontSize: 11, color: "#c8daf0", marginBottom: 2 }}>
+                                  {evt.event === "spawn" ? "Instance Added" : "Instance Removed"}: <span style={{ color: "#7b61ff" }}>{evt.name}</span>
+                                </div>
+                                <div style={{ fontSize: 9, color: "#4a6a8a" }}>
+                                  {evt.reason} · <span style={{ color: "#8ba0b8" }}>{evt.total_after || evt.total_replicas} total</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))
                         )}
                       </div>
-                    ))}
-                  </div>
+                    </div>
 
-                  {/* Recent scale events */}
-                  {clusterEvents.length > 0 && (
-                    <div style={{ marginTop: 8 }}>
-                      {clusterEvents.slice(-3).reverse().map((evt, i) => (
-                        <div key={i} style={{ fontSize: 9, color: "#4a6a8a", display: "flex", gap: 6, marginBottom: 2 }}>
-                          <span style={{ color: evt.event === "spawn" ? "#00e5a0" : "#ff3b5c" }}>
-                            {evt.event === "spawn" ? "+" : "-"}
-                          </span>
-                          <span style={{ color: "#8ba0b8" }}>{evt.name}</span>
-                          <span>{evt.reason}</span>
-                          <span style={{ color: "#3a5a7a" }}>({evt.total_replicas} total)</span>
+                    {/* Right: Validation Results + Report Summary */}
+                    <div style={{ flex: 1, overflowY: "auto" }}>
+
+                      {/* TestSprite Validation Results */}
+                      <div style={{ padding: "12px 16px", background: "#060c18", fontSize: 9, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #0e1e2e", display: "flex", alignItems: "center", gap: 6 }}>
+                        <ShieldAlert size={10} color="#7b61ff" /> TESTSPRITE VALIDATIONS
+                      </div>
+                      {validationResults.length === 0 ? (
+                        <div style={{ fontSize: 10, color: "#4a6a8a", textAlign: "center", padding: 20 }}>No validations yet. Click "Validate" to run.</div>
+                      ) : (
+                        validationResults.slice().reverse().map((v: any, i: number) => (
+                          <div key={v.validation_id || i} style={{
+                            padding: "10px 16px",
+                            borderBottom: "1px solid #0e1e2e",
+                            borderLeft: `3px solid ${v.status === "passed" ? "#00e5a0" : v.status === "partial" ? "#f5a623" : "#ff3b5c"}`,
+                          }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                              <span style={{ fontSize: 11, color: v.status === "passed" ? "#00e5a0" : "#ff3b5c", display: "flex", alignItems: "center", gap: 6 }}>
+                                {v.status === "passed" ? <CheckCircle2 size={12} /> : <ServerCrash size={12} />}
+                                {v.status?.toUpperCase()}
+                              </span>
+                              <span style={{ fontSize: 9, color: "#4a6a8a" }}>{v.trigger_event} · {v.total_duration_ms}ms</span>
+                            </div>
+                            {/* Endpoint results table */}
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 60px 60px", gap: 2, fontSize: 9 }}>
+                              <span style={{ color: "#3a5a7a" }}>ENDPOINT</span>
+                              <span style={{ color: "#3a5a7a", textAlign: "center" }}>STATUS</span>
+                              <span style={{ color: "#3a5a7a", textAlign: "right" }}>LATENCY</span>
+                              {(v.details || []).map((d: any, j: number) => (
+                                <>
+                                  <span key={`e${j}`} style={{ color: "#8ba0b8" }}>{d.name || d.endpoint}</span>
+                                  <span key={`s${j}`} style={{ textAlign: "center", color: d.passed ? "#00e5a0" : "#ff3b5c" }}>{d.passed ? "✓" : "✗"}</span>
+                                  <span key={`l${j}`} style={{ textAlign: "right", color: "#8ba0b8" }}>{d.latency_ms}ms</span>
+                                </>
+                              ))}
+                            </div>
+                            {/* TestSprite summary */}
+                            {v.testsprite_results && (
+                              <div style={{ marginTop: 8, padding: 8, background: "#0a111c", borderRadius: 4, border: "1px solid #0e1e2e" }}>
+                                <div style={{ fontSize: 9, color: "#7b61ff", marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                                  <ShieldAlert size={8} /> TestSprite: {v.testsprite_results.tests_passed}/{v.testsprite_results.tests_generated} passed · {v.testsprite_results.coverage_percent}% coverage
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+
+                      {/* Scale Report Summary */}
+                      {scaleReport && (
+                        <>
+                          <div style={{ padding: "12px 16px", background: "#060c18", fontSize: 9, color: "#f5a623", letterSpacing: 1, borderBottom: "1px solid #0e1e2e", borderTop: "1px solid #0e1e2e", display: "flex", alignItems: "center", gap: 6 }}>
+                            <FileText size={10} /> SCALE REPORT SUMMARY
+                          </div>
+                          <div style={{ padding: 16 }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+                              {[
+                                { label: "SCALE UPS", value: scaleReport.scaling_summary?.total_scale_ups || 0, color: "#00e5a0" },
+                                { label: "SCALE DOWNS", value: scaleReport.scaling_summary?.total_scale_downs || 0, color: "#ff3b5c" },
+                                { label: "MAX INSTANCES", value: scaleReport.scaling_summary?.max_instances_reached || 1, color: "#7b61ff" },
+                                { label: "VALIDATIONS", value: `${scaleReport.validations?.passed || 0}/${scaleReport.validations?.total || 0}`, color: "#f5a623" },
+                              ].map(m => (
+                                <div key={m.label} style={{ background: "#0a111c", padding: 10, borderRadius: 4, border: "1px solid #0e1e2e", textAlign: "center" }}>
+                                  <div style={{ fontSize: 8, color: "#4a6a8a", marginBottom: 4 }}>{m.label}</div>
+                                  <div style={{ fontSize: 16, color: m.color, fontWeight: "bold" }}>{m.value}</div>
+                                </div>
+                              ))}
+                            </div>
+                            {/* Actions taken */}
+                            {(scaleReport.actions || []).length > 0 && (
+                              <>
+                                <div style={{ fontSize: 9, color: "#4a6a8a", letterSpacing: 1, marginBottom: 8 }}>REMEDIATION ACTIONS</div>
+                                {scaleReport.actions.slice(0, 5).map((a: any, i: number) => (
+                                  <div key={i} style={{ borderLeft: "2px solid #7b61ff", paddingLeft: 10, marginBottom: 8 }}>
+                                    <div style={{ fontSize: 10, color: "#c8daf0" }}>{a.action_type?.toUpperCase()} on {a.service}</div>
+                                    <div style={{ fontSize: 9, color: "#00e5a0" }}>{a.result?.message || a.result?.result || JSON.stringify(a.result).slice(0, 80)}</div>
+                                  </div>
+                                ))}
+                              </>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Insights Modal Overlay */}
+          {showInsights && insightsData && (
+            <div style={{
+              position: "absolute", top: 45, left: 0, right: 0, bottom: 0,
+              background: "rgba(5, 11, 20, 0.95)",
+              backdropFilter: "blur(8px)",
+              zIndex: 100,
+              display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center",
+              padding: 40
+            }}>
+              <div style={{
+                width: "100%", maxWidth: 1000, height: "100%",
+                background: "#0a111c", border: "1px solid #1a2a3a",
+                borderRadius: 8, display: "flex", flexDirection: "column",
+                boxShadow: "0 20px 40px rgba(0,0,0,0.5)", overflow: "hidden"
+              }}>
+                {/* Header */}
+                <div style={{ padding: "16px 24px", borderBottom: "1px solid #1a2a3a", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <div style={{ background: "#7b61ff22", color: "#7b61ff", padding: "4px 8px", borderRadius: 4, fontSize: 11, fontWeight: "bold" }}>DEEP INSIGHTS</div>
+                    <div style={{ fontSize: 16, color: "#c8daf0" }}>{insightsData.service}</div>
+                  </div>
+                  <button
+                    onClick={() => setShowInsights(false)}
+                    style={{ background: "none", border: "none", color: "#8ba0b8", cursor: "pointer", fontSize: 20 }}
+                  >×</button>
+                </div>
+
+                {/* Body */}
+                <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+
+                  {/* Left: Issues List */}
+                  <div style={{ flex: "0 0 40%", borderRight: "1px solid #1a2a3a", display: "flex", flexDirection: "column" }}>
+                    <div style={{ padding: "12px 16px", background: "#060c18", fontSize: 10, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #1a2a3a" }}>UNRESOLVED ISSUES</div>
+                    <div style={{ flex: 1, overflowY: "auto" }}>
+                      {insightsData.errors && insightsData.errors.map((err: any) => (
+                        <div key={err.id} style={{ padding: 16, borderBottom: "1px solid #1a2a3a", cursor: "pointer", background: err.trend === 'up' ? "#ff3b5c05" : "transparent" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                            <span style={{ color: "#ff3b5c", fontSize: 12, fontWeight: "bold" }}>{err.type}</span>
+                            <span style={{ fontSize: 10, color: "#8ba0b8" }}>{err.id}</span>
+                          </div>
+                          <div style={{ fontSize: 11, color: "#c8daf0", marginBottom: 12, lineHeight: 1.4 }}>{err.message}</div>
+                          <div style={{ display: "flex", gap: 16, fontSize: 10, color: "#4a6a8a" }}>
+                            <span><span style={{ color: "#8ba0b8" }}>{err.count}</span> events</span>
+                            <span><span style={{ color: "#8ba0b8" }}>{err.unique_users}</span> users</span>
+                            <span style={{ color: err.trend === 'up' ? "#ff3b5c" : "#00e5a0" }}>{err.trend === 'up' ? '↗ TRENDING' : '↘ DROPPING'}</span>
+                          </div>
                         </div>
                       ))}
                     </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Insights Modal Overlay */}
-        {showInsights && insightsData && (
-          <div style={{
-            position: "absolute", top: 45, left: 0, right: 0, bottom: 0,
-            background: "rgba(5, 11, 20, 0.95)",
-            backdropFilter: "blur(8px)",
-            zIndex: 100,
-            display: "flex", flexDirection: "column",
-            alignItems: "center", justifyContent: "center",
-            padding: 40
-          }}>
-            <div style={{
-              width: "100%", maxWidth: 1000, height: "100%",
-              background: "#0a111c", border: "1px solid #1a2a3a",
-              borderRadius: 8, display: "flex", flexDirection: "column",
-              boxShadow: "0 20px 40px rgba(0,0,0,0.5)", overflow: "hidden"
-            }}>
-              {/* Header */}
-              <div style={{ padding: "16px 24px", borderBottom: "1px solid #1a2a3a", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ background: "#7b61ff22", color: "#7b61ff", padding: "4px 8px", borderRadius: 4, fontSize: 11, fontWeight: "bold" }}>DEEP INSIGHTS</div>
-                  <div style={{ fontSize: 16, color: "#c8daf0" }}>{insightsData.service}</div>
-                </div>
-                <button
-                  onClick={() => setShowInsights(false)}
-                  style={{ background: "none", border: "none", color: "#8ba0b8", cursor: "pointer", fontSize: 20 }}
-                >×</button>
-              </div>
-
-              {/* Body */}
-              <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-
-                {/* Left: Issues List */}
-                <div style={{ flex: "0 0 40%", borderRight: "1px solid #1a2a3a", display: "flex", flexDirection: "column" }}>
-                  <div style={{ padding: "12px 16px", background: "#060c18", fontSize: 10, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #1a2a3a" }}>UNRESOLVED ISSUES</div>
-                  <div style={{ flex: 1, overflowY: "auto" }}>
-                    {insightsData.errors && insightsData.errors.map((err: any) => (
-                      <div key={err.id} style={{ padding: 16, borderBottom: "1px solid #1a2a3a", cursor: "pointer", background: err.trend === 'up' ? "#ff3b5c05" : "transparent" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                          <span style={{ color: "#ff3b5c", fontSize: 12, fontWeight: "bold" }}>{err.type}</span>
-                          <span style={{ fontSize: 10, color: "#8ba0b8" }}>{err.id}</span>
-                        </div>
-                        <div style={{ fontSize: 11, color: "#c8daf0", marginBottom: 12, lineHeight: 1.4 }}>{err.message}</div>
-                        <div style={{ display: "flex", gap: 16, fontSize: 10, color: "#4a6a8a" }}>
-                          <span><span style={{ color: "#8ba0b8" }}>{err.count}</span> events</span>
-                          <span><span style={{ color: "#8ba0b8" }}>{err.unique_users}</span> users</span>
-                          <span style={{ color: err.trend === 'up' ? "#ff3b5c" : "#00e5a0" }}>{err.trend === 'up' ? '↗ TRENDING' : '↘ DROPPING'}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Right: Waterfall & Details */}
-                <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-                  <div style={{ padding: "12px 16px", background: "#060c18", fontSize: 10, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #1a2a3a" }}>
-                    TRACE WATERFALL: <span style={{ color: "#c8daf0" }}>{insightsData.waterfall?.trace_id}</span>
                   </div>
 
-                  <div style={{ padding: 20, flex: 1, overflowY: "auto" }}>
-                    {/* Waterfall */}
-                    <div style={{ marginBottom: 30 }}>
-                      <div style={{ fontSize: 11, color: "#8ba0b8", marginBottom: 12 }}>TOTAL DURATION: {insightsData.waterfall?.total_duration_ms}ms</div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {insightsData.waterfall?.spans.map((span: any) => (
-                          <div key={span.span_id} style={{ position: "relative", height: 28, background: "#050b14", borderRadius: 4 }}>
-                            <div style={{
-                              position: "absolute", left: `${(span.start_offset_ms / insightsData.waterfall.total_duration_ms) * 100}%`,
-                              width: `${Math.max(2, (span.duration_ms / insightsData.waterfall.total_duration_ms) * 100)}%`,
-                              height: "100%", background: span.type === "db" ? "#f5a623" : span.type === "cache" ? "#7b61ff" : "#00e5a0",
-                              borderRadius: 4, opacity: 0.8
-                            }} />
-                            <div style={{ position: "absolute", left: 8, top: 6, fontSize: 10, color: "#fff", textShadow: "0 1px 2px rgba(0,0,0,0.8)" }}>
-                              {span.operation} <span style={{ opacity: 0.7 }}>— {span.duration_ms}ms</span>
+                  {/* Right: Waterfall & Details */}
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+                    <div style={{ padding: "12px 16px", background: "#060c18", fontSize: 10, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #1a2a3a" }}>
+                      TRACE WATERFALL: <span style={{ color: "#c8daf0" }}>{insightsData.waterfall?.trace_id}</span>
+                    </div>
+
+                    <div style={{ padding: 20, flex: 1, overflowY: "auto" }}>
+                      {/* Waterfall */}
+                      <div style={{ marginBottom: 30 }}>
+                        <div style={{ fontSize: 11, color: "#8ba0b8", marginBottom: 12 }}>TOTAL DURATION: {insightsData.waterfall?.total_duration_ms}ms</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          {insightsData.waterfall?.spans.map((span: any) => (
+                            <div key={span.span_id} style={{ position: "relative", height: 28, background: "#050b14", borderRadius: 4 }}>
+                              <div style={{
+                                position: "absolute", left: `${(span.start_offset_ms / insightsData.waterfall.total_duration_ms) * 100}%`,
+                                width: `${Math.max(2, (span.duration_ms / insightsData.waterfall.total_duration_ms) * 100)}%`,
+                                height: "100%", background: span.type === "db" ? "#f5a623" : span.type === "cache" ? "#7b61ff" : "#00e5a0",
+                                borderRadius: 4, opacity: 0.8
+                              }} />
+                              <div style={{ position: "absolute", left: 8, top: 6, fontSize: 10, color: "#fff", textShadow: "0 1px 2px rgba(0,0,0,0.8)" }}>
+                                {span.operation} <span style={{ opacity: 0.7 }}>— {span.duration_ms}ms</span>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
+
+                      {/* Meta Cards */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                        {/* Release Correlation */}
+                        <div style={{ background: "#050b14", border: "1px solid #1a2a3a", borderRadius: 6, padding: 16 }}>
+                          <div style={{ fontSize: 10, color: "#4a6a8a", letterSpacing: 1, marginBottom: 12 }}>RELEASE CORRELATION</div>
+                          <div style={{ fontSize: 14, color: "#c8daf0", marginBottom: 8 }}>{insightsData.releases?.current_version}</div>
+                          <div style={{ fontSize: 11, color: "#8ba0b8", marginBottom: 4 }}>{insightsData.releases?.new_issues_introduced} new issues introduced</div>
+                          <div style={{ fontSize: 11, color: insightsData.releases?.status === 'degraded' ? '#ff3b5c' : '#00e5a0' }}>Crash rate delta: {insightsData.releases?.crash_rate_delta}</div>
+                        </div>
+
+                        {/* Correlated Logs */}
+                        <div style={{ background: "#050b14", border: "1px solid #1a2a3a", borderRadius: 6, padding: 16 }}>
+                          <div style={{ fontSize: 10, color: "#4a6a8a", letterSpacing: 1, marginBottom: 12 }}>CORRELATED LOGS</div>
+                          {insightsData.logs?.slice(-3).map((l: any, i: number) => (
+                            <div key={i} style={{ fontSize: 10, marginBottom: 6, display: "flex", gap: 8 }}>
+                              <span style={{ color: l.level === 'ERROR' ? '#ff3b5c' : l.level === 'WARN' ? '#f5a623' : '#3a5a7a' }}>[{l.level}]</span>
+                              <span style={{ color: "#c8daf0" }}>{l.message}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
                     </div>
-
-                    {/* Meta Cards */}
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                      {/* Release Correlation */}
-                      <div style={{ background: "#050b14", border: "1px solid #1a2a3a", borderRadius: 6, padding: 16 }}>
-                        <div style={{ fontSize: 10, color: "#4a6a8a", letterSpacing: 1, marginBottom: 12 }}>RELEASE CORRELATION</div>
-                        <div style={{ fontSize: 14, color: "#c8daf0", marginBottom: 8 }}>{insightsData.releases?.current_version}</div>
-                        <div style={{ fontSize: 11, color: "#8ba0b8", marginBottom: 4 }}>{insightsData.releases?.new_issues_introduced} new issues introduced</div>
-                        <div style={{ fontSize: 11, color: insightsData.releases?.status === 'degraded' ? '#ff3b5c' : '#00e5a0' }}>Crash rate delta: {insightsData.releases?.crash_rate_delta}</div>
-                      </div>
-
-                      {/* Correlated Logs */}
-                      <div style={{ background: "#050b14", border: "1px solid #1a2a3a", borderRadius: 6, padding: 16 }}>
-                        <div style={{ fontSize: 10, color: "#4a6a8a", letterSpacing: 1, marginBottom: 12 }}>CORRELATED LOGS</div>
-                        {insightsData.logs?.slice(-3).map((l: any, i: number) => (
-                          <div key={i} style={{ fontSize: 10, marginBottom: 6, display: "flex", gap: 8 }}>
-                            <span style={{ color: l.level === 'ERROR' ? '#ff3b5c' : l.level === 'WARN' ? '#f5a623' : '#3a5a7a' }}>[{l.level}]</span>
-                            <span style={{ color: "#c8daf0" }}>{l.message}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
                   </div>
-                </div>
 
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <style>{`
+          <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&display=swap');
         * { box-sizing: border-box; }
         ::-webkit-scrollbar { width: 4px; }
@@ -1357,7 +1896,8 @@ export default function DeployOpsCenter() {
         ::-webkit-scrollbar-thumb { background: #0e1e2e; border-radius: 2px; }
         @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
       `}</style>
-      </div>
-    </CopilotKit>
+        </div>
+      </CopilotKit>
+    </CopilotErrorBoundary>
   );
 }

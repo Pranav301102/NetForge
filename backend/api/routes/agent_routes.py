@@ -81,6 +81,17 @@ async def chat(req: ChatRequest):
     )
 
 
+@router.get("/activity")
+async def get_activity(since_id: int = 0, limit: int = 50):
+    """
+    Live activity feed — returns recent agent tool calls, analysis steps,
+    and insights stored. Frontend polls this every 3s on the Agent tab.
+    """
+    from agent.activity_log import get_recent_activity
+    entries = get_recent_activity(since_id=since_id, limit=limit)
+    return {"activity": entries, "count": len(entries)}
+
+
 @router.get("/health")
 async def get_all_health():
     """
