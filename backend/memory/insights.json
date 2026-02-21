@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-02-21T00:29:41.633565+00:00",
+  "last_updated": "2026-02-21T00:50:07.881191+00:00",
   "services": {
     "checkout-service": {
       "baseline_metrics": {
@@ -905,6 +905,16 @@
           "id": "pat-a249274e",
           "first_detected": "2026-02-20T23:57:09.785511+00:00",
           "last_confirmed": "2026-02-20T23:57:09.785515+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "cascade_risk",
+          "description": "Multiple nodes experiencing simultaneous OOMKill events following service deployments, particularly affecting stateful services and workers. Pattern suggests systemic memory pressure rather than isolated incidents.",
+          "confidence": 0.85,
+          "recommendation": "1. Implement graduated deployment strategy with memory headroom checks\n2. Set up predictive alerts for memory usage trending\n3. Review memory limits and requests across all pods\n4. Consider automatic horizontal scaling based on memory metrics",
+          "id": "pat-cb6d7abd",
+          "first_detected": "2026-02-21T00:50:06.587767+00:00",
+          "last_confirmed": "2026-02-21T00:50:06.587769+00:00",
           "occurrences": 1
         }
       ],
@@ -1832,6 +1842,39 @@
           "id": "ins-ccdcdb82",
           "timestamp": "2026-02-21T00:29:41.633559+00:00",
           "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Infrastructure Issues Detected",
+          "insight": "System health check revealed multiple critical issues: 1) Pod(s) in CrashloopBackOff state 2) High system load on host(s) 3) Redis monitoring gaps 4) Pod restart monitoring gaps. Overall platform stability at risk due to combination of issues.",
+          "evidence": "{\"total_monitors\":40,\"alert_count\":2,\"no_data_count\":2,\"critical_alerts\":[\"Pod CrashloopBackOff\",\"High system load\"],\"no_data_services\":[\"Redis memory consumption\",\"Kubernetes pod restarts\"]}",
+          "recommendation": "1. Immediate investigation of CrashloopBackOff pods and high system load\n2. Restore Redis monitoring and verify Redis health\n3. Fix pod restart monitoring\n4. Review system resources and scaling policies\n5. Implement additional redundancy for critical services",
+          "id": "ins-a308cc88",
+          "timestamp": "2026-02-21T00:49:32.657025+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Widespread Memory Pressure and Pod Stability Issues",
+          "insight": "Multiple services experiencing stability issues with OOMKills across several nodes. Critical services affected include ad-server, celery-worker, and user-db. Recent deployments may have contributed to increased memory pressure.",
+          "evidence": "{\"oom_kills\": \"Multiple nodes reporting OOMKill events\", \"unstable_pods\": [\"ad-server\", \"celery-worker\"], \"affected_nodes\": [\"vmss00000i\", \"vmss000009\", \"vmss000002\", \"vmss000004\"], \"monitor_status\": {\"total\": 40, \"alerting\": 2, \"no_data\": 2}}",
+          "recommendation": "1. Immediately investigate and address OOMKill situations through memory limit adjustments or resource scaling\n2. Review recent deployments for memory leaks\n3. Consider rolling back recent deployments if they correlate with increased memory pressure\n4. Implement memory usage monitoring with earlier warning thresholds",
+          "id": "ins-62e0847e",
+          "timestamp": "2026-02-21T00:49:41.271941+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Multiple Critical Service Issues - Memory Pressure and Pod Failures",
+          "insight": "Platform is experiencing multiple critical issues including pod CrashloopBackOffs, OOMKills across multiple nodes, and CoreDNS connectivity issues. Recent deployments may have contributed to instability. Memory pressure is particularly concerning with multiple services affected.",
+          "evidence": "{\"alerts\":[\"System load high\",\"Pod CrashloopBackOff\",\"Redis memory no data\"],\"oom_kills\":[\"vmss00000i\",\"vmss000002\",\"vmss000009\",\"vmss000004\"],\"affected_services\":[\"ad-server\",\"celery-worker\",\"product-recommendation\",\"user-db\"],\"recent_deployments\":[\"inventory-api\",\"delivery-api\",\"address-service\"]}",
+          "recommendation": "1. Immediately investigate ad-server CrashloopBackOff\n2. Increase memory limits or scale affected services horizontally\n3. Review recent inventory-api deployment\n4. Implement memory usage monitoring\n5. Consider rolling back recent deployments if stability doesn't improve\n6. Review and adjust resource limits across all services",
+          "id": "ins-50f48a24",
+          "timestamp": "2026-02-21T00:50:07.881186+00:00",
+          "status": "open"
         }
       ]
     },
@@ -2236,7 +2279,18 @@
     },
     "celery-worker": {
       "baseline_metrics": {},
-      "patterns": [],
+      "patterns": [
+        {
+          "type": "periodic_overload",
+          "description": "Recurring OOMKills indicating memory pressure on celery worker pods",
+          "confidence": 0.85,
+          "recommendation": "Increase memory limits and implement graceful degradation mechanisms",
+          "id": "pat-be5c0bf0",
+          "first_detected": "2026-02-21T00:50:03.348981+00:00",
+          "last_confirmed": "2026-02-21T00:50:03.348987+00:00",
+          "occurrences": 1
+        }
+      ],
       "insights": [
         {
           "category": "reliability",
@@ -2247,6 +2301,17 @@
           "recommendation": "1. Immediately increase memory limits for Celery workers\n2. Investigate memory usage patterns for potential memory leaks\n3. Consider implementing graceful degradation mechanisms for high load scenarios",
           "id": "ins-27b55c8e",
           "timestamp": "2026-02-20T22:54:03.047571+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Multiple Celery Worker Pods Unhealthy with OOMKills",
+          "insight": "Multiple celery-worker pods are being terminated due to OOMKills, indicating severe memory pressure. This suggests either insufficient memory limits or memory leaks in the worker processes.",
+          "evidence": "{\"oom_kills\": true, \"affected_pods\": [\"celery-worker-7dfdbfcfc5-4lm9h\", \"celery-worker-7dfdbfcfc5-clkjx\", \"celery-worker-7dfdbfcfc5-bg4hf\", \"celery-worker-7dfdbfcfc5-4898t\"], \"status\": \"Unhealthy\"}",
+          "recommendation": "1. Immediately increase memory limits for celery-worker pods\n2. Implement memory usage monitoring\n3. Review worker task memory consumption patterns\n4. Consider implementing graceful degradation mechanisms",
+          "id": "ins-ede7efe5",
+          "timestamp": "2026-02-21T00:49:57.131632+00:00",
           "status": "open"
         }
       ]

@@ -13,6 +13,7 @@ import "@copilotkit/react-ui/styles.css";
 import { CheckCircle2, ShieldAlert, ActivitySquare, ServerCrash, Lightbulb, TrendingUp, AlertTriangle, Eye, CheckCheck, Network, Cpu, Zap, ArrowUpCircle, ArrowDownCircle, FileText, Play, BarChart3 } from "lucide-react";
 
 // ─── Error Boundary for CopilotKit ──────────────────────────────────────────
+// Kept for reference — no longer used as outer wrapper.
 class CopilotErrorBoundary extends React.Component<
   { children: React.ReactNode },
   { hasError: boolean; error: string }
@@ -44,6 +45,143 @@ class CopilotErrorBoundary extends React.Component<
     }
     return this.props.children;
   }
+}
+
+// ─── Silent boundary — swallows any CopilotKit crash, renders null ────────────
+class CopilotSilencer extends React.Component<
+  { children: React.ReactNode },
+  { dead: boolean }
+> {
+  state = { dead: false };
+  static getDerivedStateFromError() { return { dead: true }; }
+  componentDidCatch(e: Error) { console.warn('[CopilotKit] silenced:', e.message); }
+  render() {
+    if (this.state.dead) return null;
+    return this.props.children;
+  }
+}
+
+// ─── CopilotFeatures — all CopilotKit hooks + CopilotChat in one isolated component ──
+// Lives inside <CopilotKit> so hooks have context. When this crashes, CopilotSilencer
+// catches it and the rest of the app keeps running unaffected.
+interface CopilotFeaturesProps {
+  nodes: any[];
+  selectedNode: any;
+  insightsData: any;
+  clusterStatus: any;
+  clusterEvents: any[];
+  nodeClickRef: React.MutableRefObject<(d: any) => void>;
+  handleManualScale: (dir: "up" | "down") => Promise<void>;
+  handleGenerateInsights: (svc?: string) => Promise<void>;
+  handleSimulateLoad: () => Promise<void>;
+  handleRunValidation: () => Promise<void>;
+  setRightTab: (tab: "agent" | "insights" | "scaling") => void;
+}
+
+function CopilotFeatures({
+  nodes, selectedNode, insightsData, clusterStatus, clusterEvents,
+  nodeClickRef, handleManualScale, handleGenerateInsights,
+  handleSimulateLoad, handleRunValidation, setRightTab,
+}: CopilotFeaturesProps) {
+  // ── CopilotKit Hooks ──────────────────────────────────────────────────────
+  useCopilotReadable({
+    description: "The list of currently degraded or critical services in the cluster.",
+    value: nodes.filter((n: any) => n.health !== "healthy").map((n: any) => ({ service: n.id, health: n.health, p99_latency: n.cpu * 40, avg_latency: n.mem * 14 })),
+  });
+  useCopilotReadable({
+    description: "The currently selected service node in the UI.",
+    value: selectedNode ? selectedNode.id : null,
+  });
+  useCopilotReadable({
+    description: "Deep Sentry-like insights data for the selected service (including errors, span waterfall, and logs).",
+    value: insightsData,
+  });
+  useCopilotReadable({
+    description: "Current cluster scaling status including replicas, queue depth, and recent scale events.",
+    value: clusterStatus ? {
+      total_replicas: clusterStatus.total_replicas,
+      pending_work: clusterStatus.pending_work_items,
+      completed: clusterStatus.completed_analyses,
+      recent_events: clusterEvents.slice(-5),
+    } : null,
+  });
+
+  // ── CopilotKit Actions ────────────────────────────────────────────────────
+  // @ts-ignore - CopilotKit types mismatch
+  useCopilotAction({
+    name: "selectService",
+    description: "Select and analyze a specific service in the dependency graph. Use this when the user asks about a service.",
+    parameters: [{ name: "serviceName", type: "string" as const, description: "Service ID like 'payment-service' or 'api-gateway'" }],
+    handler: ({ serviceName }: { serviceName: string }) => {
+      const node = nodes.find((n: any) => n.id === serviceName);
+      if (node) nodeClickRef.current(node);
+      return `Selected ${serviceName}`;
+    },
+  });
+  // @ts-ignore - CopilotKit types mismatch
+  useCopilotAction({
+    name: "scaleCluster",
+    description: "Scale the agent cluster up or down. Use 'up' to add instances when overloaded, 'down' to remove idle instances.",
+    parameters: [{ name: "direction", type: "string" as const, description: "'up' or 'down'" }],
+    handler: async ({ direction }: { direction: string }) => {
+      await handleManualScale(direction as "up" | "down");
+      return `Scaled cluster ${direction}. Now at ${clusterStatus?.total_replicas || '?'} replicas.`;
+    },
+  });
+  // @ts-ignore - CopilotKit types mismatch
+  useCopilotAction({
+    name: "generateInsights",
+    description: "Generate optimization insights for all services or a specific one.",
+    parameters: [{ name: "serviceName", type: "string" as const, description: "Optional service name, leave empty for all", required: false }],
+    handler: async ({ serviceName }: { serviceName?: string }) => {
+      await handleGenerateInsights(serviceName);
+      setRightTab("insights");
+      return `Generated insights${serviceName ? ` for ${serviceName}` : ' for all services'}`;
+    },
+  });
+  // @ts-ignore - CopilotKit types mismatch
+  useCopilotAction({
+    name: "simulateTrafficSpike",
+    description: "Simulate a traffic spike to test auto-scaling. This floods the work queue and triggers the MAPE-K loop.",
+    parameters: [],
+    handler: async () => {
+      await handleSimulateLoad();
+      setRightTab("scaling");
+      return "Simulated traffic spike. Check the Scaling tab for results.";
+    },
+  });
+  // @ts-ignore - CopilotKit types mismatch
+  useCopilotAction({
+    name: "runNetworkValidation",
+    description: "Run TestSprite network validation to verify all endpoints are healthy after a scale event.",
+    parameters: [],
+    handler: async () => {
+      await handleRunValidation();
+      setRightTab("scaling");
+      return "Network validation complete. Check the Scaling tab for results.";
+    },
+  });
+
+  return (
+    <>
+      <style dangerouslySetInnerHTML={{
+        __html: `
+          .copilotKitChat { height: 100% !important; border: none !important; border-radius: 0 !important; background: transparent !important; font-family: 'DM Mono', monospace !important; }
+          .copilotKitMessages { padding: 12px !important; font-size: 11px !important; }
+          .copilotKitMessage { font-family: 'DM Mono', monospace !important; font-size: 11px !important; background: #080f1c !important; border: 1px solid #0e1e2e !important; color: #c8daf0 !important; border-radius: 6px !important; padding: 8px 12px !important; margin-bottom: 8px !important; }
+          .copilotKitUserMessage { background: #0a1828 !important; border-color: #1a2a3a !important; color: #8ba0b8 !important; }
+          .copilotKitInput, .copilotKitInput textarea { background: #070e1a !important; border: 1px solid #0e1e2e !important; border-radius: 8px !important; font-family: 'DM Mono', monospace !important; font-size: 11px !important; color: #c8daf0 !important; }
+          .copilotKitInput textarea::placeholder { color: #3a5a7a !important; }
+          .copilotKitHeader { display: none !important; }
+          .copilotKitResponseButton { display: none !important; }
+        `}} />
+      {/* @ts-ignore */}
+      <CopilotChat
+        labels={{ initial: "Agent online — ask about cluster health, service metrics, or anomalies." }}
+        className="copilotKitChat"
+      />
+    </>
+  );
 }
 
 type Health = "healthy" | "degraded" | "critical" | "rolling";
@@ -841,102 +979,12 @@ export default function DeployOpsCenter() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, links]);
 
-  // ── CopilotKit Hooks ────────────────────────────────────────────────────────
-
-  useCopilotReadable({
-    description: "The list of currently degraded or critical services in the cluster.",
-    value: nodes.filter(n => n.health !== "healthy").map(n => ({ service: n.id, health: n.health, p99_latency: n.cpu * 40, avg_latency: n.mem * 14 })),
-  });
-
-  useCopilotReadable({
-    description: "The currently selected service node in the UI.",
-    value: selectedNode ? selectedNode.id : null,
-  });
-
-  useCopilotReadable({
-    description: "Deep Sentry-like insights data for the selected service (including errors, span waterfall, and logs).",
-    value: insightsData,
-  });
-
-  useCopilotReadable({
-    description: "Current cluster scaling status including replicas, queue depth, and recent scale events.",
-    value: clusterStatus ? {
-      total_replicas: clusterStatus.total_replicas,
-      pending_work: clusterStatus.pending_work_items,
-      completed: clusterStatus.completed_analyses,
-      recent_events: clusterEvents.slice(-5),
-    } : null,
-  });
-
-  // ── CopilotKit Actions — let AI control the UI ────────────────────────────
-
-  // @ts-ignore - CopilotKit types mismatch
-  useCopilotAction({
-    name: "selectService",
-    description: "Select and analyze a specific service in the dependency graph. Use this when the user asks about a service.",
-    parameters: [{ name: "serviceName", type: "string" as const, description: "Service ID like 'payment-service' or 'api-gateway'" }],
-    handler: ({ serviceName }: { serviceName: string }) => {
-      const node = nodes.find(n => n.id === serviceName);
-      if (node) nodeClickRef.current(node as NodeDatum);
-      return `Selected ${serviceName}`;
-    },
-  });
-
-  // @ts-ignore - CopilotKit types mismatch
-  useCopilotAction({
-    name: "scaleCluster",
-    description: "Scale the agent cluster up or down. Use 'up' to add instances when overloaded, 'down' to remove idle instances.",
-    parameters: [{ name: "direction", type: "string" as const, description: "'up' or 'down'" }],
-    handler: async ({ direction }: { direction: string }) => {
-      await handleManualScale(direction as "up" | "down");
-      return `Scaled cluster ${direction}. Now at ${clusterStatus?.total_replicas || '?'} replicas.`;
-    },
-  });
-
-  // @ts-ignore - CopilotKit types mismatch
-  useCopilotAction({
-    name: "generateInsights",
-    description: "Generate optimization insights for all services or a specific one.",
-    parameters: [{ name: "serviceName", type: "string" as const, description: "Optional service name, leave empty for all", required: false }],
-    handler: async ({ serviceName }: { serviceName?: string }) => {
-      await handleGenerateInsights(serviceName);
-      setRightTab("insights");
-      return `Generated insights${serviceName ? ` for ${serviceName}` : ' for all services'}`;
-    },
-  });
-
-  // @ts-ignore - CopilotKit types mismatch
-  useCopilotAction({
-    name: "simulateTrafficSpike",
-    description: "Simulate a traffic spike to test auto-scaling. This floods the work queue and triggers the MAPE-K loop.",
-    parameters: [],
-    handler: async () => {
-      await handleSimulateLoad();
-      setRightTab("scaling");
-      return "Simulated traffic spike. Check the Scaling tab for results.";
-    },
-  });
-
-  // @ts-ignore - CopilotKit types mismatch
-  useCopilotAction({
-    name: "runNetworkValidation",
-    description: "Run TestSprite network validation to verify all endpoints are healthy after a scale event.",
-    parameters: [],
-    handler: async () => {
-      await handleRunValidation();
-      setRightTab("scaling");
-      return "Network validation complete. Check the Scaling tab for results.";
-    },
-  });
-
   const selectedNodeData = selectedNode ? nodes.find(n => n.id === selectedNode.id) : null;
 
   // ─── RENDER ──────────────────────────────────────────────────────────────
 
   return (
-    <CopilotErrorBoundary>
-      <CopilotKit runtimeUrl="http://localhost:8000/copilotkit" agent="default">
-        <div style={{
+    <div style={{
           fontFamily: "'DM Mono', 'Courier New', monospace",
           background: "#050b14",
           minHeight: "100vh",
@@ -1295,24 +1343,26 @@ export default function DeployOpsCenter() {
                       </div>
                     </div>
 
-                    {/* CopilotKit Chat UI — embedded inline */}
+                    {/* CopilotKit Chat UI — isolated so crashes don't affect the rest of the app */}
                     <div style={{ flex: 1, display: "flex", flexDirection: "column", position: "relative", minHeight: 0 }}>
-                      <style dangerouslySetInnerHTML={{
-                        __html: `
-                     .copilotKitChat { height: 100% !important; border: none !important; border-radius: 0 !important; background: transparent !important; font-family: 'DM Mono', monospace !important; }
-                     .copilotKitMessages { padding: 12px !important; font-size: 11px !important; }
-                     .copilotKitMessage { font-family: 'DM Mono', monospace !important; font-size: 11px !important; background: #080f1c !important; border: 1px solid #0e1e2e !important; color: #c8daf0 !important; border-radius: 6px !important; padding: 8px 12px !important; margin-bottom: 8px !important; }
-                     .copilotKitUserMessage { background: #0a1828 !important; border-color: #1a2a3a !important; color: #8ba0b8 !important; }
-                     .copilotKitInput, .copilotKitInput textarea { background: #070e1a !important; border: 1px solid #0e1e2e !important; border-radius: 8px !important; font-family: 'DM Mono', monospace !important; font-size: 11px !important; color: #c8daf0 !important; }
-                     .copilotKitInput textarea::placeholder { color: #3a5a7a !important; }
-                     .copilotKitHeader { display: none !important; }
-                     .copilotKitResponseButton { display: none !important; }
-                   `}} />
-                      {/* @ts-ignore */}
-                      <CopilotChat
-                        labels={{ initial: "Agent online — ask about cluster health, service metrics, or anomalies." }}
-                        className="copilotKitChat"
-                      />
+                      <CopilotSilencer>
+                        {/* @ts-ignore */}
+                        <CopilotKit runtimeUrl="http://localhost:8000/copilotkit" agent="default">
+                          <CopilotFeatures
+                            nodes={nodes}
+                            selectedNode={selectedNode}
+                            insightsData={insightsData}
+                            clusterStatus={clusterStatus}
+                            clusterEvents={clusterEvents}
+                            nodeClickRef={nodeClickRef}
+                            handleManualScale={handleManualScale}
+                            handleGenerateInsights={handleGenerateInsights}
+                            handleSimulateLoad={handleSimulateLoad}
+                            handleRunValidation={handleRunValidation}
+                            setRightTab={setRightTab}
+                          />
+                        </CopilotKit>
+                      </CopilotSilencer>
                     </div>
                   </div>
                 </>
@@ -2109,7 +2159,5 @@ export default function DeployOpsCenter() {
         @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
       `}</style>
         </div>
-      </CopilotKit>
-    </CopilotErrorBoundary>
   );
 }
