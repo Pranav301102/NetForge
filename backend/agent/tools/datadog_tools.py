@@ -52,7 +52,7 @@ def _dd_get(path: str, params: str = "") -> tuple[int, Any]:
             "tool_call",
             f"Datadog API: {tool_name}",
             detail=f"GET {path}" + (f" params={params[:100]}" if params else ""),
-            source="claude",
+            source="minimax",
             metadata={"api_path": path},
         )
     except Exception:

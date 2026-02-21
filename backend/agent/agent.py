@@ -1,7 +1,7 @@
 """
 Forge reliability agent — dual-model architecture.
 
-Claude (Bedrock) = Main Orchestrator — handles all tool calls and user-facing responses.
+MiniMax = Main Orchestrator — handles all tool calls and user-facing responses.
 MiniMax M2.5 = Background Sub-Model — runs async for deeper pattern analysis.
 
 The agent:
@@ -58,10 +58,7 @@ from agent.tools.memory_tools import (
 
 log = logging.getLogger("forge.agent")
 
-BEDROCK_MODEL_ID = os.getenv(
-    "BEDROCK_MODEL_ID",
-    "anthropic.claude-3-5-sonnet-20241022-v2:0",
-)
+
 AWS_REGION = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-west-2"))
 
 MINIMAX_API_KEY = os.getenv("MINIMAX_API", "")
@@ -191,16 +188,21 @@ def _build_datadog_mcp_client() -> MCPClient:
 
 def _build_orchestrator_model():
     """
-    Build the main orchestrator LLM — always Bedrock Claude.
-    Claude handles all tool calls, user-facing responses, and analysis prompts.
+    Build the main orchestrator LLM — MiniMax.
+    MiniMax handles all tool calls, user-facing responses, and analysis prompts.
     """
-    from strands.models.bedrock import BedrockModel
-    print(f"[Forge] Orchestrator: Bedrock Claude ({BEDROCK_MODEL_ID}) in {AWS_REGION}")
-    return BedrockModel(
-        model_id=BEDROCK_MODEL_ID,
-        region_name=AWS_REGION,
-        temperature=0.1,
-        max_tokens=4096,
+    from strands.models.litellm import LiteLLMModel
+    print(f"[Forge] Orchestrator: MiniMax ({MINIMAX_MODEL})")
+    return LiteLLMModel(
+        client_args={
+            "api_key": MINIMAX_API_KEY,
+            "api_base": MINIMAX_BASE_URL,
+        },
+        model_id=f"openai/{MINIMAX_MODEL}",
+        params={
+            "temperature": 0.1,
+            "max_tokens": 4096,
+        },
     )
 
 
@@ -288,7 +290,7 @@ async def _run_minimax_background(prompt: str, context_label: str = "background"
 async def _fire_minimax_background(service_name: str, main_report: dict) -> None:
     """
     Fire-and-forget: run MiniMax in background to generate deeper insights
-    from the main Claude analysis, then store results in memory.
+    from the main orchestrator analysis, then store results in memory.
     """
     from memory.store import add_insight, add_pattern
 
@@ -344,7 +346,7 @@ Return a JSON object:
 
 
 def build_agent() -> Agent:
-    """Build and return a configured Strands agent with Bedrock Claude as orchestrator."""
+    """Build and return a configured Strands agent with MiniMax as orchestrator."""
     model = _build_orchestrator_model()
 
     graph_tools = [
@@ -401,7 +403,7 @@ def build_agent() -> Agent:
 
 
 # ---------------------------------------------------------------------------
-# Demo intelligence engine — rich realistic data when Bedrock is unavailable
+# Demo intelligence engine — rich realistic data when MiniMax is unavailable
 # ---------------------------------------------------------------------------
 
 _DEMO_INSIGHTS_LIBRARY = {
@@ -664,15 +666,15 @@ async def analyze_service(service_name: str) -> dict:
     Run a full analysis on a service and return a structured health report.
 
     Architecture:
-    - Claude (Bedrock) orchestrates: calls tools, generates the report
+    - MiniMax orchestrates: calls tools, generates the report
     - MiniMax (background): fires async for deeper pattern analysis
-    - Falls back to demo mode if Bedrock is unavailable
+    - Falls back to demo mode if Minimax is unavailable
     """
     from memory.store import record_analysis, update_baseline
 
     run_id = str(uuid.uuid4())[:8]
 
-    # Try the real agent (Claude orchestrator) first
+    # Try the real agent (MiniMax orchestrator) first
     try:
         agent = build_agent()
 
@@ -718,7 +720,7 @@ Return a JSON object with this exact structure:
         report = json.loads(text[start:end])
 
     except Exception as e:
-        log.warning("[Forge] Claude orchestrator failed, using demo mode: %s", e)
+        log.warning("[Forge] MiniMax orchestrator failed, using demo mode: %s", e)
         # Smart demo fallback — generate a realistic report
         report = _demo_analyze_service(service_name, run_id)
 
@@ -837,11 +839,11 @@ async def generate_insights(service_name: str | None = None) -> dict:
     Run a deeper analysis focused on optimization insights.
 
     Architecture:
-    - Claude orchestrates tool calls and generates the primary report
+    - MiniMax orchestrates tool calls and generates the primary report
     - MiniMax runs in background for supplementary pattern detection
-    - Falls back to demo mode if Claude is unavailable
+    - Falls back to demo mode if MiniMax is unavailable
     """
-    # Try the real agent (Claude orchestrator)
+    # Try the real agent (MiniMax orchestrator)
     try:
         from memory.store import load_memory, record_analysis
         agent = build_agent()
@@ -924,7 +926,7 @@ Return a JSON summary:
         return report
 
     except Exception as e:
-        log.warning("[Forge] Claude orchestrator failed for insights, using demo mode: %s", e)
+        log.warning("[Forge] MiniMax orchestrator failed for insights, using demo mode: %s", e)
         return await _generate_demo_insights(service_name)
 
 
@@ -933,7 +935,7 @@ async def chat_with_agent(user_message: str, context: dict | None = None) -> Asy
     Stream a conversational response from the agent.
     Used by the CopilotKit chat endpoint.
 
-    Uses Claude orchestrator only — chat is real-time and should not
+    Uses MiniMax orchestrator only — chat is real-time and should not
     wait for MiniMax background analysis.
     """
     agent = build_agent()

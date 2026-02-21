@@ -3,10 +3,9 @@ Connection test for all Forge backend services.
 
 Tests:
 1. Environment variables loaded correctly
-2. Claude (Bedrock) orchestrator connectivity
-3. MiniMax M2.5 (LiteLLM) background model connectivity
-4. Neo4j graph database connectivity
-5. Full analyze_service flow (Claude + MiniMax background)
+2. MiniMax M2.5 (LiteLLM) model connectivity
+3. Neo4j graph database connectivity
+4. Full analyze_service flow (MiniMax)
 """
 import asyncio
 import json
@@ -28,11 +27,11 @@ def test_env_vars():
 
     checks = {
         "MINIMAX_API": os.getenv("MINIMAX_API"),
+        "MINIMAX_MODEL": os.getenv("MINIMAX_MODEL", "MiniMax-M2.5"),
         "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID"),
         "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY"),
         "AWS_SESSION_TOKEN": os.getenv("AWS_SESSION_TOKEN"),
         "AWS_DEFAULT_REGION": os.getenv("AWS_DEFAULT_REGION"),
-        "BEDROCK_MODEL_ID": os.getenv("BEDROCK_MODEL_ID"),
         "NEO4J_URI": os.getenv("NEO4J_URI"),
         "DATADOG_API_KEY": os.getenv("DATADOG_API_KEY"),
         "DEMO_MODE": os.getenv("DEMO_MODE"),
@@ -42,7 +41,7 @@ def test_env_vars():
     for key, val in checks.items():
         status = "✓ SET" if val else "✗ NOT SET"
         # Show the value for non-sensitive keys
-        display = val if key in ("BEDROCK_MODEL_ID", "AWS_DEFAULT_REGION", "DEMO_MODE") else None
+        display = val if key in ("MINIMAX_MODEL", "AWS_DEFAULT_REGION", "DEMO_MODE") else None
         extra = f" = {display}" if display else ""
         print(f"  {status}  {key}{extra}")
         if not val and key not in ("AWS_SESSION_TOKEN",):
@@ -52,56 +51,17 @@ def test_env_vars():
     return all_ok
 
 
-def test_claude_bedrock():
-    """Test 2: Verify Bedrock Claude orchestrator connectivity."""
-    print("=" * 60)
-    print("TEST 2: Claude (Bedrock) Orchestrator")
-    print("=" * 60)
-
-    try:
-        from strands.models.bedrock import BedrockModel
-        from strands import Agent
-
-        model_id = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
-        region = os.getenv("AWS_REGION", os.getenv("AWS_DEFAULT_REGION", "us-west-2"))
-        print(f"  Model: {model_id}")
-        print(f"  Region: {region}")
-
-        model = BedrockModel(
-            model_id=model_id,
-            region_name=region,
-            temperature=0.1,
-            max_tokens=100,
-        )
-        agent = Agent(model=model, system_prompt="Reply concisely.", tools=[])
-
-        start = time.time()
-        result = agent("Say exactly: BEDROCK OK")
-        elapsed = time.time() - start
-
-        response = str(result).strip()
-        print(f"  Response: {response[:100]}")
-        print(f"  Latency: {elapsed:.1f}s")
-        print(f"\n  Result: PASS ✅\n")
-        return True
-
-    except Exception as e:
-        print(f"  Error: {type(e).__name__}: {e}")
-        print(f"\n  Result: FAIL ❌\n")
-        return False
-
-
 def test_minimax():
-    """Test 3: Verify MiniMax M2.5 background model connectivity."""
+    """Test 2: Verify MiniMax M2.5 model connectivity."""
     print("=" * 60)
-    print("TEST 3: MiniMax M2.5 (Background Model)")
+    print("TEST 2: MiniMax M2.5")
     print("=" * 60)
 
     api_key = os.getenv("MINIMAX_API", "")
     if not api_key:
         print("  Skipped: MINIMAX_API not set")
         print(f"\n  Result: SKIP ⏭️\n")
-        return True  # Not a failure — background model is optional
+        return True  # Not a failure — test environment might use demo mode
 
     try:
         from strands.models.litellm import LiteLLMModel
@@ -139,9 +99,9 @@ def test_minimax():
 
 
 async def test_neo4j():
-    """Test 4: Verify Neo4j graph database connectivity."""
+    """Test 3: Verify Neo4j graph database connectivity."""
     print("=" * 60)
-    print("TEST 4: Neo4j Graph Database")
+    print("TEST 3: Neo4j Graph Database")
     print("=" * 60)
 
     try:
@@ -169,9 +129,9 @@ async def test_neo4j():
 
 
 async def test_full_analysis():
-    """Test 5: Run full analyze_service to test the combined Claude + MiniMax flow."""
+    """Test 4: Run full analyze_service to test the flow."""
     print("=" * 60)
-    print("TEST 5: Full Analysis Flow (Claude + MiniMax Background)")
+    print("TEST 4: Full Analysis Flow")
     print("=" * 60)
 
     try:
@@ -203,7 +163,6 @@ async def main():
 
     # Synchronous tests
     results["env_vars"] = test_env_vars()
-    results["claude_bedrock"] = test_claude_bedrock()
     results["minimax"] = test_minimax()
 
     # Async tests

@@ -570,7 +570,7 @@ async function analyzeService(svcName) {
     setStatus('agent-status', true, 'Agent Ready');
   } catch(e) {
     log(`Agent call failed: ${e.message}`, 'error');
-    log('Running in scripted demo mode (no Bedrock creds needed for this view)', 'dim');
+    log('Running in scripted demo mode (no Minimax creds needed for this view)', 'dim');
     setStatus('agent-status', false, 'Agent (no creds)');
   }
 

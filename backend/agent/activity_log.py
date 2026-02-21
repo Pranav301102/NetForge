@@ -21,14 +21,14 @@ def log_activity(
     event_type: str,
     summary: str,
     detail: str = "",
-    source: str = "claude",
+    source: str = "minimax",
     metadata: dict | None = None,
 ) -> int:
     """
     Append an activity entry.
 
     event_type: tool_call | insight_stored | analysis | error | minimax
-    source: claude | minimax | system
+    source: minimax | system
     """
     global _counter
     with _lock:

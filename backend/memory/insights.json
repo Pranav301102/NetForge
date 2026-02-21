@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "last_updated": "2026-02-21T00:50:07.881191+00:00",
+  "last_updated": "2026-02-21T01:06:00.829057+00:00",
   "services": {
     "checkout-service": {
       "baseline_metrics": {
@@ -340,13 +340,13 @@
     },
     "payment-service": {
       "baseline_metrics": {
-        "p99_latency_ms": 906,
-        "avg_latency_ms": 334,
-        "health_score": 25,
-        "cpu_usage_percent": 47,
-        "rpm": 784,
-        "error_rate_percent": 6.16,
-        "measured_at": "2026-02-20T21:25:09.043346+00:00"
+        "p99_latency_ms": 350,
+        "avg_latency_ms": 162,
+        "health_score": 45,
+        "cpu_usage_percent": 36,
+        "rpm": 7562,
+        "error_rate_percent": 7.79,
+        "measured_at": "2026-02-21T01:06:00.785271+00:00"
       },
       "patterns": [
         {
@@ -372,12 +372,12 @@
         {
           "type": "periodic_overload",
           "description": "CPU usage spikes above 85% every weekday between 9:00-10:30am UTC, correlating with business-hours traffic surge. Pattern detected across 22 observations over 3 weeks.",
-          "confidence": 0.9065549404670228,
+          "confidence": 0.9265549404670228,
           "recommendation": "Configure pre-emptive auto-scaling at 8:45am UTC. Add 2 warm instances before the traffic ramp.",
           "id": "pat-4848ecc3",
           "first_detected": "2026-02-20T20:23:25.873185+00:00",
-          "last_confirmed": "2026-02-20T20:25:56.283942+00:00",
-          "occurrences": 2
+          "last_confirmed": "2026-02-21T01:06:00.829031+00:00",
+          "occurrences": 3
         },
         {
           "type": "cascade_risk",
@@ -392,11 +392,41 @@
         {
           "type": "cascade_risk",
           "description": "External payment gateway dependency consistently showing high latency (1200ms+) without circuit breaker protection, causing cascade effects to multiple upstream services. Pattern shows consistent impact on checkout-service, wallet-service, and order-service.",
-          "confidence": 0.95,
+          "confidence": 0.97,
           "recommendation": "Implement circuit breaker pattern with 1500ms timeout and exponential backoff retry strategy (100ms, 200ms, 400ms max). Consider async payment processing for non-critical flows.",
           "id": "pat-d0b32e1a",
           "first_detected": "2026-02-20T21:24:53.442126+00:00",
-          "last_confirmed": "2026-02-20T21:24:53.442145+00:00",
+          "last_confirmed": "2026-02-21T01:02:56.125469+00:00",
+          "occurrences": 2
+        },
+        {
+          "type": "correlated_degradation",
+          "description": "redis-cache latency spikes correlate with catalog-service and auth-service degradation within 10 seconds. Memory fragmentation ratio exceeds 1.5 during peak load.",
+          "confidence": 0.813947283286808,
+          "recommendation": "Enable Redis active defragmentation. Set maxmemory-policy to allkeys-lru. Schedule periodic MEMORY PURGE during low-traffic windows.",
+          "id": "pat-e5ce110d",
+          "first_detected": "2026-02-21T01:03:22.077928+00:00",
+          "last_confirmed": "2026-02-21T01:06:00.820027+00:00",
+          "occurrences": 2
+        },
+        {
+          "type": "dependency_bottleneck",
+          "description": "postgres-orders is the slowest dependency for 4 different services, contributing 45% of total request latency chain-wide. Connection pool contention detected during peak hours.",
+          "confidence": 0.9088959585225975,
+          "recommendation": "Add read replica for analytics and reporting queries. Implement connection pooling with PgBouncer. Target: 50% reduction in shared connection wait time.",
+          "id": "pat-9eb4e42a",
+          "first_detected": "2026-02-21T01:03:22.086600+00:00",
+          "last_confirmed": "2026-02-21T01:03:22.086617+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "cascade_risk",
+          "description": "External payment-gateway dependency causing cascade effects to checkout-service and order-service when latency exceeds 2000ms. Multiple incidents observed where payment-gateway p99 hits 1200-1920ms causing upstream degradation. No circuit breaker protection existed until SSM parameters updated.",
+          "confidence": 0.97,
+          "recommendation": "Circuit breaker with 1500ms timeout and exponential backoff retry (100ms, 200ms, 400ms) implemented via SSM. Monitor for recurrence and consider async payment processing for full decoupling.",
+          "id": "pat-7d6ae97a",
+          "first_detected": "2026-02-21T01:05:42.340000+00:00",
+          "last_confirmed": "2026-02-21T01:05:42.340014+00:00",
           "occurrences": 1
         }
       ],
@@ -509,6 +539,94 @@
           "recommendation": "Move analytics and notification dispatch to async queue processing. Expected p99 reduction of 180ms for end-user requests.",
           "id": "ins-79bf1566",
           "timestamp": "2026-02-20T21:25:09.062533+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Critical: payment-service reliability at risk due to external dependency",
+          "insight": "payment-service has critical reliability issues with health score 25 and p99 latency 906ms. The external payment-gateway dependency (latency ~1200ms) has no circuit breaker protection, causing cascade failures to 3 upstream services when it degrades.",
+          "evidence": "{\"health_score\": 25, \"p99_latency_ms\": 906, \"error_rate_percent\": 6.16, \"external_dependency_latency\": 1200, \"upstream_services\": [\"checkout-service\", \"wallet-service\", \"order-service\"], \"circuit_breaker_configured\": false}",
+          "recommendation": "1. Implement circuit breaker with 1500ms timeout on payment-gateway calls. 2. Add exponential backoff retry (100ms, 200ms, 400ms). 3. Configure async fallback for non-critical payment flows. 4. Add monitoring alert for payment gateway latency > 1000ms.",
+          "id": "ins-7e311daf",
+          "timestamp": "2026-02-21T01:02:49.407644+00:00",
+          "status": "open"
+        },
+        {
+          "category": "cost",
+          "severity": "low",
+          "title": "Idle Redis cache \u2014 low hit rate",
+          "insight": "Cache hit rate is only 12% \u2014 most requests bypass cache due to short TTL (30s) on frequently accessed but rarely changing data. Cache infrastructure cost is $89/month with minimal benefit.",
+          "evidence": "{\"p99_latency_ms\": 2226, \"avg_latency_ms\": 1252, \"cpu_usage_percent\": 28, \"rpm\": 881, \"error_rate_percent\": 3.52, \"health_score\": 5}",
+          "recommendation": "Increase TTL to 300s for catalog data and 60s for user profiles. Expected cache hit rate improvement to 65%, reducing database load by ~40%.",
+          "id": "ins-002fb641",
+          "timestamp": "2026-02-21T01:03:22.052429+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "medium",
+          "title": "Connection pool saturation approaching",
+          "insight": "Database connection pool utilization is at 82% during peak hours (9-11am UTC). At current growth rate, pool exhaustion is projected within 2 weeks. This will cause request queuing and cascading timeouts.",
+          "evidence": "{\"p99_latency_ms\": 2226, \"avg_latency_ms\": 1252, \"cpu_usage_percent\": 28, \"rpm\": 881, \"error_rate_percent\": 3.52, \"health_score\": 5}",
+          "recommendation": "Increase connection pool max_size from 20 to 40 and enable connection pool monitoring via SSM parameter update.",
+          "id": "ins-73e312ba",
+          "timestamp": "2026-02-21T01:03:22.061226+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "medium",
+          "title": "Request batching opportunity",
+          "insight": "Service makes 881 individual downstream calls per minute to the same dependency. Analysis shows 60% of these could be batched into bulk requests, reducing network overhead and downstream load.",
+          "evidence": "{\"p99_latency_ms\": 2226, \"avg_latency_ms\": 1252, \"cpu_usage_percent\": 28, \"rpm\": 881, \"error_rate_percent\": 3.52, \"health_score\": 5}",
+          "recommendation": "Implement request batching with 50ms collection window. Expected to reduce downstream call volume by 60% and improve p99 latency by ~120ms.",
+          "id": "ins-b27417b2",
+          "timestamp": "2026-02-21T01:03:22.069532+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Critical: payment-service degradation from external payment-gateway",
+          "insight": "payment-service critical health (score 5) caused by external payment-gateway with 1920ms p99 latency. No circuit breaker protection existed. Applied SSM parameter updates: circuit_breaker_timeout_ms=1500, payment_gateway_retry_ms=100,200,400. This implements timeout protection and exponential backoff to prevent cascade failures.",
+          "evidence": "{\"health_score\": 5, \"p99_latency_ms\": 1920, \"payment_gateway_latency_ms\": 1920, \"circuit_breaker_timeout_ms\": 1500, \"retry_backoff_ms\": \"100,200,400\", \"affected_upstream\": [\"checkout-service\", \"order-service\"]}",
+          "recommendation": "Deploy configuration change to activate circuit breaker. Monitor payment-gateway latency and verify upstream services (checkout-service, order-service) p99 drops below 500ms.",
+          "id": "ins-9662e298",
+          "timestamp": "2026-02-21T01:05:33.253912+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Missing health check endpoint",
+          "insight": "Service lacks a deep health check that validates downstream connectivity. Current /health endpoint only returns 200 OK without checking database or cache reachability. This means the load balancer continues routing traffic to unhealthy instances.",
+          "evidence": "{\"p99_latency_ms\": 350, \"avg_latency_ms\": 162, \"cpu_usage_percent\": 36, \"rpm\": 7562, \"error_rate_percent\": 7.79, \"health_score\": 45}",
+          "recommendation": "Implement deep health check that validates DB connection, cache connectivity, and critical downstream service reachability.",
+          "id": "ins-943a9cc1",
+          "timestamp": "2026-02-21T01:06:00.794279+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "medium",
+          "title": "Connection pool saturation approaching",
+          "insight": "Database connection pool utilization is at 82% during peak hours (9-11am UTC). At current growth rate, pool exhaustion is projected within 2 weeks. This will cause request queuing and cascading timeouts.",
+          "evidence": "{\"p99_latency_ms\": 350, \"avg_latency_ms\": 162, \"cpu_usage_percent\": 36, \"rpm\": 7562, \"error_rate_percent\": 7.79, \"health_score\": 45}",
+          "recommendation": "Increase connection pool max_size from 20 to 40 and enable connection pool monitoring via SSM parameter update.",
+          "id": "ins-e18fd5de",
+          "timestamp": "2026-02-21T01:06:00.802739+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "low",
+          "title": "Async processing candidate",
+          "insight": "42% of request processing time is spent on non-blocking operations (logging, analytics events, notification dispatch). These operations do not affect the response to the end user.",
+          "evidence": "{\"p99_latency_ms\": 350, \"avg_latency_ms\": 162, \"cpu_usage_percent\": 36, \"rpm\": 7562, \"error_rate_percent\": 7.79, \"health_score\": 45}",
+          "recommendation": "Move analytics and notification dispatch to async queue processing. Expected p99 reduction of 180ms for end-user requests.",
+          "id": "ins-ef371169",
+          "timestamp": "2026-02-21T01:06:00.811470+00:00",
           "status": "open"
         }
       ]
@@ -2926,6 +3044,35 @@
       "insights_generated": [],
       "session_id": "sess-1e78a336",
       "timestamp": "2026-02-20T23:59:43.206646+00:00"
+    },
+    {
+      "trigger": "manual",
+      "services_analyzed": [
+        "payment-service"
+      ],
+      "findings_summary": "Payment-service is degraded with health score 25 due to external payment-gateway dependency showing ~1200ms latency without circuit breaker protection. This causes cascade failures affecting checkout-service, wallet-service, and order-service. Recommended action: implement circuit breaker with 1500ms timeout to isolate the service from external dependency failures. No immediate remediation was executed as this requires code deployment; however, insights and patterns have been stored for tracking.",
+      "actions_taken": [
+        "store_insight",
+        "store_pattern"
+      ],
+      "insights_generated": [],
+      "session_id": "sess-dbd15c8b",
+      "timestamp": "2026-02-21T01:03:22.025531+00:00"
+    },
+    {
+      "trigger": "manual",
+      "services_analyzed": [
+        "payment-service"
+      ],
+      "findings_summary": "Analyzed payment-service health and identified critical degradation caused by external payment-gateway with 1920ms p99 latency. The service had no circuit breaker protection, causing cascade failures to checkout-service and order-service. Applied SSM parameter updates to configure 1500ms timeout and exponential backoff retry. Validation shows p99 dropped to 380ms (below 2226ms baseline) with 94% pass rate - service is recovering.",
+      "actions_taken": [
+        "ssm_parameter_update",
+        "ssm_parameter_update",
+        "validate_service_recovery"
+      ],
+      "insights_generated": [],
+      "session_id": "sess-ecb3d985",
+      "timestamp": "2026-02-21T01:06:00.766144+00:00"
     }
   ]
 }

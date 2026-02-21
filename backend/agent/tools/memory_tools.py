@@ -59,7 +59,7 @@ def store_insight(
             "insight_stored",
             f"[{severity.upper()}] {title}",
             detail=f"{service_name}: {insight[:200]}",
-            source="claude",
+            source="minimax",
             metadata={"service": service_name, "category": category, "severity": severity, "insight_id": insight_id},
         )
     except Exception:
@@ -102,7 +102,7 @@ def store_pattern(
             "pattern_stored",
             f"Pattern: {pattern_type} on {service_name}",
             detail=description[:200],
-            source="claude",
+            source="minimax",
             metadata={"service": service_name, "pattern_type": pattern_type, "confidence": confidence},
         )
     except Exception:

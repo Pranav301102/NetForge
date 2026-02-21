@@ -129,7 +129,7 @@ _AGENT_MANIFEST = {
         "default": {
             "name": "default",
             "className": "default",
-            "description": "Forge reliability agent — powered by AWS Strands + Bedrock Claude",
+            "description": "Forge reliability agent — powered by AWS Strands + MiniMax",
         }
     },
     "audioFileTranscriptionEnabled": False
@@ -191,7 +191,7 @@ async def copilotkit_endpoint(request: Request):
         "analysis",
         f"Agent invoked: {user_message[:100]}",
         detail=user_message[:300],
-        source="claude",
+        source="minimax",
     )
 
     async def ag_ui_stream():
@@ -222,7 +222,7 @@ async def copilotkit_endpoint(request: Request):
             "analysis",
             f"Agent completed analysis",
             detail=summary,
-            source="claude",
+            source="minimax",
         )
 
         yield f"data: {json.dumps({'type': 'TextMessageEnd', 'messageId': 'msg-1'})}\n\n"

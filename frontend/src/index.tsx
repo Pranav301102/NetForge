@@ -10,7 +10,7 @@ const root = ReactDOM.createRoot(
 );
 root.render(
   <React.StrictMode>
-    <CopilotKit publicApiKey="ck_pub_16fefb799d506d90a688889ee017d055" runtimeUrl="http://localhost:8000/copilotkit" agent="default">
+    <CopilotKit publicApiKey="ck_pub_16fefb799d506d90a688889ee017d055" runtimeUrl="http://localhost:8000/copilotkit" agent="netforge">
       <App />
     </CopilotKit>
   </React.StrictMode>
