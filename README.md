@@ -1,201 +1,408 @@
-# NetForge
+# ⚡ NetForge — Autonomous Reliability Agent
 
-Autonomous microservice observability and remediation platform. A dual-model AI agent watches your service graph, detects anomalies, remediates failures, and continuously learns patterns — all in real time.
-
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  React Frontend (D3 force graph + CopilotKit chat)          │
-│  Tabs: Agent · Insights · Scaling                           │
-└────────────────────┬────────────────────────────────────────┘
-                     │ HTTP / SSE
-┌────────────────────▼────────────────────────────────────────┐
-│  FastAPI Backend (port 8000)                                 │
-│  /api/graph        /api/insights     /api/cluster            │
-│  /api/agent        /api/network-test /copilotkit             │
-└──────┬──────────────────────────┬───────────────────────────┘
-       │                          │
-┌──────▼──────┐          ┌────────▼────────────────────────┐
-│  Neo4j      │          │  Agent Layer                     │
-│  Service    │          │  ┌─────────────────────────────┐ │
-│  graph +    │          │  │  Claude (Bedrock)            │ │
-│  topology   │          │  │  Main orchestrator           │ │
-└─────────────┘          │  │  → Neo4j · Datadog · AWS    │ │
-                         │  └──────────┬──────────────────┘ │
-                         │             │ fire-and-forget     │
-                         │  ┌──────────▼──────────────────┐ │
-                         │  │  MiniMax M2.5 (background)  │ │
-                         │  │  Deep pattern analysis       │ │
-                         │  └──────────┬──────────────────┘ │
-                         │             │                     │
-                         │  ┌──────────▼──────────────────┐ │
-                         │  │  Memory Store (JSON)         │ │
-                         │  │  Insights · Patterns         │ │
-                         │  │  Baselines · History         │ │
-                         │  └─────────────────────────────┘ │
-                         │                                   │
-                         │  ┌─────────────────────────────┐ │
-                         │  │  Network Testing Agent       │ │
-                         │  │  Reads memory → derives      │ │
-                         │  │  strategies → runs httpx     │ │
-                         │  │  tests → p50/p95/p99         │ │
-                         │  └─────────────────────────────┘ │
-                         │                                   │
-                         │  ┌─────────────────────────────┐ │
-                         │  │  MAPE-K Cluster Coordinator  │ │
-                         │  │  Auto-scales agent replicas  │ │
-                         │  │  Monitor→Analyze→Plan→Exec   │ │
-                         │  └─────────────────────────────┘ │
-                         └───────────────────────────────────┘
-```
+> **An AI-powered SRE platform that predicts, prevents, and auto-remediates microservice failures — powered by a dual-model agent architecture on AWS Strands + MiniMax.**
 
 ---
 
-## Features
+## 🏆 Hackathon Tracks
 
-### Agent Tab
-- **CopilotKit chat** — talk directly to the Claude orchestrator
-- **Live activity feed** — every tool call, insight stored, and remediation logged in real time
-- **TestSprite validation panel** — endpoint health check results after each scale event
-
-### Insights Tab
-- **Persistent memory** — agent accumulates insights and patterns across sessions
-- **Severity-ranked feed** — critical → high → medium → low, with ACK/RESOLVE actions
-- **Pattern detection** — latency spikes, cascade risk, periodic overload, dependency bottlenecks
-- **MAPE-K cluster panel** — live replica status, CPU bars, scale event log
-
-### Scaling Tab
-- **Instance cards** — live CPU/task/service-assignment for every running agent replica
-- **Scale event timeline** — full history of spawn/kill events with reasons
-- **TestSprite validation results** — per-endpoint latency table after each scale
-- **Network Testing Agent** — see below
-- **Scale report summary** — aggregate stats: ups, downs, max instances, validation pass rate
+| Track | Integration |
+|-------|-------------|
+| **AWS** | AWS Strands Agents, ECS, CodeDeploy, SSM |
+| **Datadog** | Datadog MCP Server, LLM Observability, live metric pipelines, monitor alerts |
+| **Neo4j** | Graph-native topology via **Neo4j MCP Server**, blast-radius analysis, deployment audit graph |
+| **TestSprite** | Automated network stability validation pre/post every scale event |
+| **CopilotKit** | Embedded AI co-pilot sidebar wired directly to the Strands agent via SSE + AgentCore |
+| **MiniMax** | MiniMax M2.5 as a background reasoning sub-model (async deep-pattern analysis) |
 
 ---
 
-## Network Testing Agent
+## 🧠 What is NetForge?
 
-The network testing agent reads the **persistent memory store** (insights + patterns) and derives test strategies tailored to what the agent has already learned about your services.
+NetForge is a **production-ready autonomous reliability platform** for microservice environments. Instead of dashboards that require humans to interpret and act, NetForge runs an AI agent that:
 
-### How it works
-
-```
-Memory (insights + patterns)
-         │
-         ▼
-  generate_strategies()
-         │
-  ┌──────┴────────────────────────────────────┐
-  │ Strategy types derived from memory:        │
-  │                                            │
-  │  health_sweep     — always included        │
-  │    HTTP GET all core endpoints, 2xx check  │
-  │                                            │
-  │  latency_probe    — from latency insights  │
-  │    10 sequential requests → p50/p95/p99    │
-  │                                            │
-  │  load_burst       — from overload insights │
-  │    20 concurrent requests, error rate      │
-  │                                            │
-  │  cascade_sim      — from cascade patterns  │
-  │    Sequential hop-by-hop probe to find     │
-  │    where failure propagation starts        │
-  │                                            │
-  │  dependency_chain — from bottleneck pats   │
-  │    Walk dependency order, assert each hop  │
-  └────────────────────────────────────────────┘
-         │
-         ▼
-  run_network_tests()   ← POST /api/network-test/run
-         │
-         ▼
-  NetworkTestReport
-  ├── overall_status (passed / partial / failed)
-  ├── per-strategy results (p50/p95/p99, error_rate%)
-  └── plain-English recommendations
-```
-
-### Network testing strategies (research-backed)
-
-Based on current best practices for microservice resilience testing:
-
-| Strategy | What it tests | Failure signal |
-|----------|--------------|----------------|
-| **Health sweep** | All endpoints reachable, 2xx, <2s | Any non-2xx or timeout |
-| **Latency probe** | p99 < 1000ms, p95 < 500ms | SLO breach at p95/p99 |
-| **Load burst** | 20 concurrent reqs, <5% error rate | >5% errors or p95 > 800ms |
-| **Cascade simulation** | Downstream hop chain survives upstream failure | Any link breaking the chain |
-| **Dependency chain** | Each service dependency is reachable in order | Broken hop = blast radius found |
-
-Informed by:
-- [Microservices Testing Strategies (TestKube)](https://testkube.io/blog/cloud-native-microservices-testing-strategies)
-- [Chaos Engineering Best Practices (Steadybit)](https://steadybit.com/blog/chaos-experiments/)
-- [Chaos Testing Guide (Katalon)](https://katalon.com/resources-center/blog/chaos-testing-a-complete-guide)
-
-### API
-
-```
-GET  /api/network-test/strategies   # list strategies derived from current memory
-POST /api/network-test/run          # execute all strategies, stream results
-GET  /api/network-test/results      # most recent report
-```
+1. **Sees everything** — live Datadog metrics, Neo4j service topology, deployment history, container health
+2. **Understands causality** — traces cascading latency through the dependency graph to find the *deepest* root cause
+3. **Acts autonomously** — scales ECS services, rolls back CodeDeploy deployments, updates SSM parameters — choosing the least invasive fix first
+4. **Validates recovery** — runs TestSprite network stability tests automatically after every remediation
+5. **Remembers and learns** — persistent memory stores every insight and detected pattern, making future analyses smarter
+6. **Explains itself** — CopilotKit sidebar lets you talk to the agent in natural language at any time
 
 ---
 
-## Quick Start
+## 🏗️ Architecture
+
+```mermaid
+flowchart TD
+    User(["👤 User / Judge"])
+
+    subgraph Frontend["🖥️ Frontend — React + D3 + CopilotKit"]
+        UI["D3 Force Graph\nService Topology"]
+        Sidebar["CopilotKit AI Sidebar\nNatural Language Chat"]
+        InsightsPanel["Insights Panel\nPatterns · Recommendations"]
+    end
+
+    subgraph Backend["⚙️ Backend — FastAPI"]
+        API["REST + SSE API\n/api/agent  /api/hooks\n/copilotkit  /api/insights"]
+    end
+
+    subgraph Agent["🤖 Strands Agent — MiniMax"]
+        Orchestrator["Main Orchestrator\nTool Calls · Analysis · Remediation"]
+    end
+
+    subgraph BgModel["🔮 Background Sub-Model"]
+        MiniMax["MiniMax M2.5 via LiteLLM\nasyncio.create_task — 60s timeout guard\nDeep Pattern Analysis"]
+        Memory["Persistent Memory\nInsights · Patterns · Baselines"]
+        MiniMax -->|"store [MiniMax] tags"| Memory
+    end
+
+    subgraph Tools["🛠️ Agent Tools"]
+        DD["Datadog MCP Server\n+ 6 Direct REST Tools\nMetrics · Events · Monitors"]
+        Neo4j["Neo4j Graph DB\nTopology · Blast Radius\nDeployment Audit"]
+        AWS["AWS Tools\nECS Scale · CodeDeploy\nSSM Parameters"]
+        TS["TestSprite\nRecovery Validation\nScale Stability Tests"]
+        MemTools["Memory Tools\nRecall · Store · Recommend"]
+    end
+
+    User -->|"click node / chat"| Frontend
+    Frontend <-->|"REST / SSE"| Backend
+    Backend <-->|"invoke"| Agent
+    Orchestrator -->|"tool calls"| DD
+    Orchestrator -->|"tool calls"| Neo4j
+    Orchestrator -->|"tool calls"| AWS
+    Orchestrator -->|"tool calls"| TS
+    Orchestrator -->|"tool calls"| MemTools
+    MemTools <--> Memory
+    Orchestrator -->|"fire-and-forget"| MiniMax
+
+    style Frontend fill:#0e1e34,stroke:#3a5a7a,color:#c8daf0
+    style Backend fill:#0e1e34,stroke:#3a5a7a,color:#c8daf0
+    style Agent fill:#0d2040,stroke:#7b61ff,color:#c8daf0
+    style BgModel fill:#0d1f30,stroke:#f5a623,color:#c8daf0
+    style Tools fill:#091828,stroke:#1e3a5a,color:#c8daf0
+```
+
+### Model Design
+
+**MiniMax — Main Orchestrator**
+- Handles all tool calls, analysis, and user-facing responses
+- Runs the full mandatory workflow: check memory → Datadog alerts → Neo4j graph → root cause → remediation → validation → store insight
+- Streams responses to the CopilotKit sidebar via Server-Sent Events
+
+**MiniMax M2.5 — Background Sub-Model**
+- Fires asynchronously via `asyncio.create_task()` after every orchestrator response
+- Performs deeper pattern analysis and predictive reasoning on the main report
+- Protected by a 60-second timeout guard — failures never propagate to the user
+- Stores enriched insights and patterns tagged `[MiniMax]` in persistent memory
+
+---
+
+## 🔗 Integration Details
+
+### MiniMax + Strands Agents
+- `strands-agents` framework powers the orchestrator agent
+- Model: MiniMax via `LiteLLM`
+- Agent executes 20+ tools across Datadog, Neo4j, AWS, TestSprite, and memory
+
+### Datadog MCP + Direct REST
+- **MCP Server**: `@winor30/mcp-server-datadog` launched as a stdio subprocess — gives the agent native MCP tool access to Datadog search, events, and monitors
+- **Direct REST tools**: 6 custom Datadog tools using the REST API directly for webhook use-cases (faster, no subprocess)
+  - `get_datadog_monitor_alerts` — firing monitors ranked by severity
+  - `get_datadog_metrics_summary` — aggregated metric health across 2,944 metrics
+  - `query_datadog_metric` — time-series deep dives on specific metrics
+  - `get_datadog_infrastructure_health` — host/container infrastructure overview
+  - `get_datadog_events` — OOMKills, K8s deployment events, pod failures
+  - `get_datadog_container_metrics` — CPU/memory per container
+- Connected to a real Datadog account monitoring a Shopist AKS e-commerce platform (2,944 active metrics, 1000+ events/hour)
+
+### Neo4j Graph Database
+- **Neo4j MCP Server**: Provides native graph traversal and Text2Cypher capabilities, allowing the agent to query complex infrastructure patterns, perform blast-radius analysis, and verify deployment safe-guards.
+- **Deployment audit**: Every deployment creates a `Deployment` node linked to the service via `HAD_DEPLOYMENT`
+- **Graph-powered tools**:
+  - `get_service_dependencies` — traverses dependency chains
+  - `get_blast_radius` — counts upstream services affected by a failure
+  - `find_slowest_dependencies` — identifies latency bottlenecks
+  - `find_recent_changes` — queries deployments in the last N hours
+  - `get_service_health_from_graph` — reads live health properties on nodes
+- Datadog sync webhook writes live metrics back into Neo4j properties every sync, keeping the graph fresh
+
+### TestSprite
+- Validates service recovery after every remediation action
+- **Scale stability pipeline** (`POST /api/hooks/scale`):
+  1. Records pre-scale baseline (Phase 1)
+  2. Executes `scale_ecs_service`
+  3. Waits for stabilization window
+  4. Runs post-scale network stability test (Phase 2)
+  5. If `network_stable: false`, automatically stores a `reliability` insight with the delta metrics
+- Tools: `validate_service_recovery`, `validate_scale_stability`
+
+### CopilotKit
+- Frontend wrapped in `<CopilotKit runtimeUrl="http://localhost:8000/copilotkit">`
+- Backend implements the AG-UI SSE protocol at `POST /copilotkit` using **AgentCore**
+- `useCopilotReadable` hooks inject live context (degraded services, selected node, insights) so the AI knows what's on screen
+- `useCopilotAction` hooks allow the agent to trigger UI actions directly
+
+### MiniMax M2.5
+- Integrated via `LiteLLMModel` with the `openai/MiniMax-M2.5` model ID
+- Lazy-initialized singleton to avoid startup latency
+- `<think>...</think>` tokens stripped from output before JSON parsing
+- Async with 60s timeout: if MiniMax is slow, the main response is already delivered
+
+---
+
+## 🖥️ Frontend
+
+The React + TypeScript dashboard is a **real-time ops center**:
+
+- **D3 Force-Directed Graph** — live service dependency visualization with health-colored nodes, glow filters, and animated critical-path pulse effects
+- **Health polling** — fetches `GET /api/agent/health` every 5 seconds to update node colors in-place without layout jumps
+- **CopilotKit AI Sidebar** — click any node → agent immediately runs a full analysis; or ask anything in the sidebar chat
+- **Insights Panel** — paginated view of all stored insights, patterns, and optimization recommendations with acknowledge/resolve actions
+- **Cluster Panel** — simulate load scenarios and watch the MAPE-K control loop respond in real time
+- **Remediation Feed** — live log of every agent action (scale, rollback, SSM update) with timestamps
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Python 3.11+
+- Node 18+ (npm)
+- Neo4j Aura free tier
+- MiniMax API credentials (or set `DEMO_MODE=true`)
+
+### 1. Clone & Configure
 
 ```bash
-# Backend
-cd backend
-pip install -r requirements.txt
-uvicorn api.main:app --reload --port 8000
+git clone https://github.com/Pranav301102/NetForge
+cd NetForge
+```
 
-# Frontend
+Copy and fill in credentials:
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+```env
+# Default Region
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your_key
+AWS_SECRET_ACCESS_KEY=your_secret
+
+# Datadog MCP
+DATADOG_API_KEY=...
+DATADOG_APP_KEY=...
+DATADOG_SITE=datadoghq.com
+
+# Neo4j (Aura)
+NEO4J_URI=neo4j+s://your-instance.databases.neo4j.io
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=...
+
+# TestSprite
+TESTSPRITE_API_KEY=...
+
+# MiniMax (background sub-model)
+MINIMAX_API=sk-...
+
+# Set true to bypass API calls (uses rich demo data)
+DEMO_MODE=false
+
+FRONTEND_URL=http://localhost:3000
+```
+
+### 2. Start Neo4j (Docker)
+
+```bash
+docker-compose up neo4j -d
+```
+
+Or use the hosted Neo4j Aura instance already configured in `.env.example`.
+
+### 3. Start the Backend
+
+```bash
+cd backend
+bash start_demo.sh
+# → API: http://localhost:8000
+# → Demo UI: http://localhost:8000/demo
+# → API Docs: http://localhost:8000/docs
+```
+
+Or manually:
+
+```bash
+cd backend
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 4. Start the Frontend
+
+```bash
 cd frontend
 npm install
-npm start          # proxies /api/* → localhost:8000
+npm start
+# → http://localhost:3000
 ```
 
-### Environment variables (`backend/.env`)
+### 5. Seed Demo Data (Optional)
 
-| Variable | Purpose |
-|----------|---------|
-| `NEO4J_URI` | Bolt URI for the service graph DB |
-| `NEO4J_USER` / `NEO4J_PASSWORD` | Neo4j credentials |
-| `BEDROCK_MODEL_ID` | Claude model on AWS Bedrock (orchestrator) |
-| `AWS_REGION` | AWS region for Bedrock |
-| `MINIMAX_API` | MiniMax M2.5 API key (background analysis) |
-| `DATADOG_API_KEY` / `DATADOG_APP_KEY` | Datadog REST + MCP tools |
-| `DEMO_MODE` | `true` = realistic fake data, no real AWS/Datadog calls |
+```bash
+# Trigger full insight generation across all services
+curl -X POST http://localhost:8000/api/insights/generate
+
+# Sync live Datadog metrics into Neo4j
+curl -X POST http://localhost:8000/api/hooks/datadog-sync \
+  -H "Content-Type: application/json" -d '{}'
+
+# Simulate a degradation event to watch the agent respond
+curl -X POST "http://localhost:8000/api/agent/simulate/degrade?service=payment-service"
+```
 
 ---
 
-## Polling behaviour
+## 📡 API Reference
 
-All background polls implement:
-- **Burst/rest cycle** — active for 30 s, rest for 60 s, repeat
-- **Page-visibility guard** — pauses when browser tab is hidden
-- **In-flight guard** — no overlapping concurrent requests
-- **`Promise.allSettled`** — one slow endpoint never drops the others
-- **Chunked streaming** — `/api/graph/`, `/api/cluster/report`, `/api/cluster/validations` all stream JSON in 4 KB chunks to avoid ECONNRESET
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/agent/analyze` | Full AI agent analysis of a service |
+| `GET`  | `/api/agent/health` | Health scores for all services (5s poll target) |
+| `POST` | `/api/agent/chat` | Streaming SSE chat with the agent |
+| `GET`  | `/api/graph/` | Service graph (nodes + links) |
+| `GET`  | `/api/graph/deployments/recent` | Recent deployments |
+| `GET`  | `/api/insights/` | All stored AI insights |
+| `GET`  | `/api/insights/patterns` | Detected cross-service patterns |
+| `GET`  | `/api/insights/recommendations` | Actionable optimization recommendations |
+| `POST` | `/api/insights/generate` | Trigger AI insight generation |
+| `POST` | `/api/hooks/deploy` | Deployment webhook → async analysis |
+| `POST` | `/api/hooks/datadog-sync` | Pull live Datadog metrics → Neo4j |
+| `POST` | `/api/hooks/scale` | Scale service + TestSprite stability test |
+| `GET`  | `/api/cluster/status` | Cluster health and replica state |
+| `POST` | `/api/cluster/simulate-load` | Simulate traffic load for demo |
+| `POST` | `/api/cluster/tick` | Advance MAPE-K control loop one tick |
+| `GET`  | `/copilotkit` | CopilotKit agent discovery |
+| `POST` | `/copilotkit` | CopilotKit SSE chat stream |
 
 ---
 
-## Agent memory schema
+## 🎬 Demo Flow (for Judges)
 
-```json
-{
-  "services": {
-    "<service-name>": {
-      "baseline_metrics": { "p99_latency_ms": 0, "health_score": 100 },
-      "patterns": [{ "type": "latency_spike", "confidence": 0.85 }],
-      "insights": [{ "severity": "high", "status": "open", "recommendation": "..." }]
-    }
-  },
-  "global_patterns": [{ "type": "cascade_failure", "services_involved": [] }],
-  "analysis_history": []
-}
+1. **Open** `http://localhost:3000` — the D3 dependency graph loads with live health data from Neo4j
+2. **Click any service node** — the agent immediately runs a full analysis, updating the annotation bar with the summary
+3. **Open the Insights tab** (right panel) → click **"Generate Insights"** to watch MiniMax analyze all services
+4. **Use the CopilotKit sidebar** — ask: *"Why is order-service degraded and what should I do?"*
+5. **Trigger a scale event** via cURL (or the cluster panel) and watch TestSprite validate network stability
+6. **Simulate degradation**:
+   ```bash
+   curl -X POST "http://localhost:8000/api/agent/simulate/degrade?service=payment-service"
+   ```
+   Then click `payment-service` on the graph to watch the full remediation cycle
+7. **Sync Datadog** to pull live Kubernetes/AKS container metrics into the graph:
+   ```bash
+   curl -X POST http://localhost:8000/api/hooks/datadog-sync -H "Content-Type: application/json" -d '{}'
+   ```
+
+---
+
+## 🏛️ MAPE-K Autonomic Control Loop
+
+NetForge implements the classical MAPE-K feedback loop for self-healing:
+
+| Phase | Implementation |
+|-------|---------------|
+| **Monitor** | Datadog MCP + direct REST (metrics, events, monitor alerts) + Neo4j health polling |
+| **Analyze** | Strands Agent orchestrated by MiniMax — root cause tracing through the Neo4j dependency graph |
+| **Plan** | MiniMax selects least-invasive action: SSM param update → scale up → rollback |
+| **Execute** | `scale_ecs_service`, `trigger_codedeploy_rollback`, `update_ssm_parameter` |
+| **Knowledge** | Persistent JSON memory — insights, patterns, baselines — enriched in background by MiniMax M2.5 |
+
+---
+
+## 🧪 Test Results
+
+From `test_connection.py` (4/4 passing):
+
+| Test | Result | Details |
+|------|--------|---------|
+| Environment variables | ✅ | All 9 keys loaded |
+| MiniMax M2.5 | ✅ | ~4.0s response |
+| Neo4j | ✅ | 10 services found |
+| Full analysis | ✅ | 54.3s — MiniMax ran 8 tool calls, MiniMax enriched memory async |
+
+---
+
+## 📁 Project Structure
+
 ```
+NetForge/
+├── backend/
+│   ├── agent/
+│   │   ├── agent.py          # Dual-model orchestrator (MiniMax)
+│   │   ├── models.py         # Pydantic models
+│   │   └── tools/
+│   │       ├── aws_tools.py      # ECS scaling, CodeDeploy rollback, SSM
+│   │       ├── datadog_tools.py  # 6 direct Datadog REST tools
+│   │       ├── neo4j_tools.py    # Graph traversal tools
+│   │       ├── testsprite.py     # Recovery + scale stability validation
+│   │       └── memory_tools.py   # Persistent insight/pattern storage
+│   ├── api/
+│   │   ├── main.py               # FastAPI app + CopilotKit endpoint
+│   │   └── routes/
+│   │       ├── agent_routes.py   # Analyze, chat, health
+│   │       ├── hooks_routes.py   # Deploy webhook, Datadog sync, scale
+│   │       ├── insights_routes.py
+│   │       ├── graph_routes.py
+│   │       └── cluster_routes.py # MAPE-K cluster coordinator
+│   ├── db/
+│   │   └── neo4j_client.py
+│   ├── memory/
+│   │   └── store.py              # JSON-backed persistent memory
+│   ├── cluster/
+│   │   └── coordinator.py        # MAPE-K autonomic loop
+│   ├── requirements.txt
+│   ├── .env.example
+│   └── start_demo.sh
+├── frontend/
+│   └── src/
+│       ├── App.tsx               # D3 graph + CopilotKit + Insights UI
+│       └── index.tsx             # CopilotKit provider root
+├── docker-compose.yml
+└── README.md
+```
+
+---
+
+## 🔐 Demo Mode
+
+Set `DEMO_MODE=true` in `.env` to run without real AWS credentials. The agent falls back to a rich demo intelligence engine that generates statistically realistic insights, anomalies, patterns, and remediation actions — fully exercising all UI flows and API responses.
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Agent Framework | AWS Strands Agents |
+| Primary LLM | MiniMax M2.5 |
+| Background LLM | MiniMax M2.5 via LiteLLM |
+| Observability | Datadog MCP + REST API |
+| Service Graph | Neo4j (Aura) |
+| Validation | TestSprite API |
+| AI Co-Pilot | CopilotKit (React + FastAPI) + AgentCore |
+| Backend | FastAPI + uvicorn + Python 3.11 |
+| Frontend | React 18 + TypeScript + D3.js |
+| Containerization | Docker + docker-compose |
+
+## 🐞 Current Defects & Known Issues
+
+1. **CopilotKit Discovery Race**: Occasional "Agent 'default' not found" error on frontend cold-start (now handled silently by `CopilotErrorBoundary`).
+2. **MiniMax Analysis Latency**: Background deep-reasoning takes ~60s; insights may not appear in the dashboard until the next polling cycle.
+3. **AWS STS Session Sensitivity**: High-privilege remediation actions (ECS scale, CodeDeploy rollback) are sensitive to session expiration in real-mode.
+4. **Graph-Metric Sync Delay**: The webhook-based sync from Datadog to Neo4j has a 10s propagation delay, occasionally showing stale node colors briefly.
+
+---
+
+*Built at the AWS × Datadog Generative AI Hackathon, February 2026. Optimized for autonomous reliability.*
