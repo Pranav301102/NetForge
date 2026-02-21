@@ -25,6 +25,7 @@ from api.routes.graph_routes import router as graph_router
 from api.routes.hooks_routes import router as hooks_router
 from api.routes.insights_routes import router as insights_router
 from api.routes.cluster_routes import router as cluster_router
+from api.routes.network_test_routes import router as network_test_router
 from db.neo4j_client import close_driver, get_driver
 
 
@@ -108,6 +109,7 @@ app.include_router(demo_router)
 app.include_router(hooks_router)
 app.include_router(insights_router)
 app.include_router(cluster_router)
+app.include_router(network_test_router)
 
 
 # ---------------------------------------------------------------------------
@@ -122,11 +124,15 @@ app.include_router(cluster_router)
 
 # Agent manifest returned by both /copilotkit?info=true and /copilotkit/info
 _AGENT_MANIFEST = {
+    "version": "1.0.0",
     "agents": {
         "default": {
+            "name": "default",
+            "className": "default",
             "description": "Forge reliability agent — powered by AWS Strands + Bedrock Claude",
         }
-    }
+    },
+    "audioFileTranscriptionEnabled": False
 }
 
 

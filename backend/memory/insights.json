@@ -1,16 +1,16 @@
 {
   "version": "1.0",
-  "last_updated": "2026-02-20T23:39:11.263363+00:00",
+  "last_updated": "2026-02-21T00:29:41.633565+00:00",
   "services": {
     "checkout-service": {
       "baseline_metrics": {
-        "p99_latency_ms": 1991,
-        "avg_latency_ms": 438,
+        "p99_latency_ms": 2008,
+        "avg_latency_ms": 686,
         "health_score": 5,
-        "cpu_usage_percent": 50,
-        "rpm": 170,
-        "error_rate_percent": 7.44,
-        "measured_at": "2026-02-20T18:10:49.138919+00:00"
+        "cpu_usage_percent": 13,
+        "rpm": 3591,
+        "error_rate_percent": 4.96,
+        "measured_at": "2026-02-20T23:59:32.215420+00:00"
       },
       "patterns": [
         {
@@ -26,12 +26,12 @@
         {
           "type": "periodic_overload",
           "description": "CPU usage spikes above 85% every weekday between 9:00-10:30am UTC, correlating with business-hours traffic surge. Pattern detected across 28 observations over 3 weeks.",
-          "confidence": 0.8972672194589615,
+          "confidence": 0.9172672194589615,
           "recommendation": "Configure pre-emptive auto-scaling at 8:45am UTC. Add 2 warm instances before the traffic ramp.",
           "id": "pat-143da2f4",
           "first_detected": "2026-02-20T18:10:49.198973+00:00",
-          "last_confirmed": "2026-02-20T18:10:49.198992+00:00",
-          "occurrences": 1
+          "last_confirmed": "2026-02-20T23:59:32.270505+00:00",
+          "occurrences": 2
         },
         {
           "type": "periodic_overload",
@@ -51,6 +51,66 @@
           "id": "pat-88858854",
           "first_detected": "2026-02-20T22:53:38.157481+00:00",
           "last_confirmed": "2026-02-20T22:53:38.157503+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "latency_spike",
+          "description": "Regular JVM garbage collection pauses causing 2-3 minute latency spikes every 4 hours. Current heap configuration (2GB) with G1GC collector results in stop-the-world pauses when heap usage reaches 92%.",
+          "confidence": 0.89,
+          "recommendation": "1. Switch from G1GC to ZGC for sub-millisecond pause times\n2. Increase heap from 2GB to 3GB\n3. Add JVM args: -XX:+UseZGC -Xms3g -Xmx3g",
+          "id": "pat-a01c2a56",
+          "first_detected": "2026-02-20T23:59:20.631954+00:00",
+          "last_confirmed": "2026-02-20T23:59:20.631972+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "cascade_risk",
+          "description": "When payment-gateway response time exceeds 2000ms, order-service and checkout-service degrade within 30 seconds. Observed in 9 of the last 20 incidents.",
+          "confidence": 0.9161645255189312,
+          "recommendation": "Add 1500ms timeout with circuit breaker on payment-gateway calls. Implement retry with exponential backoff (100ms, 200ms, 400ms max).",
+          "id": "pat-9bee26a0",
+          "first_detected": "2026-02-20T23:59:32.260077+00:00",
+          "last_confirmed": "2026-02-20T23:59:32.260090+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "cascading_failure",
+          "description": "[MiniMax] External service degradation cascaded through checkout-service due to lack of isolation. No circuit breaker meant requests piled up in queue, exhausting connection pool and compounding latency.",
+          "confidence": 0.95,
+          "recommendation": "Implement circuit breaker with 50% error rate threshold, 30s recovery timeout, and fallback logic.",
+          "id": "pat-347e80d2",
+          "first_detected": "2026-02-20T23:59:56.186390+00:00",
+          "last_confirmed": "2026-02-20T23:59:56.186393+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "configuration_drift",
+          "description": "[MiniMax] Initial connection_pool_max of 10 was likely never validated under production load. The fix (25) suggests baseline was misconfigured from deployment.",
+          "confidence": 0.8,
+          "recommendation": "Add connection pool utilization metrics to baseline monitoring. Validate configurations under load during deployment.",
+          "id": "pat-3c0f9564",
+          "first_detected": "2026-02-20T23:59:56.199190+00:00",
+          "last_confirmed": "2026-02-20T23:59:56.199195+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "incomplete_remediation",
+          "description": "[MiniMax] Symptom treated (connection pool) but cause persists (external gateway degradation). 4% failure rate indicates residual impact not fully resolved.",
+          "confidence": 0.85,
+          "recommendation": "Distinguish between symptom fixes and root cause resolution. Add validation criteria: pass_rate >= 99.5% for full recovery.",
+          "id": "pat-15e35a1c",
+          "first_detected": "2026-02-20T23:59:56.213999+00:00",
+          "last_confirmed": "2026-02-20T23:59:56.214010+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "external_dependency_risk",
+          "description": "[MiniMax] Critical business flow (checkout) depends on single external payment provider with no redundancy. High-risk architecture for revenue-critical service.",
+          "confidence": 0.9,
+          "recommendation": "Multi-provider payment strategy with automatic failover. Consider rate limiting on external calls to prevent cascading.",
+          "id": "pat-1b5f8893",
+          "first_detected": "2026-02-20T23:59:56.242064+00:00",
+          "last_confirmed": "2026-02-20T23:59:56.242075+00:00",
           "occurrences": 1
         }
       ],
@@ -130,6 +190,105 @@
           "recommendation": "1. Switch from G1GC to ZGC for sub-millisecond pause times\n2. Increase heap from 2GB to 3GB\n3. Add JVM args: -XX:+UseZGC -Xms3g -Xmx3g",
           "id": "ins-5bd3c09a",
           "timestamp": "2026-02-20T22:53:45.778916+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "high",
+          "title": "JVM GC pauses causing regular latency spikes",
+          "insight": "Regular JVM garbage collection pauses causing 2-3 minute latency spikes every 4 hours. Current heap configuration (2GB) with G1GC collector results in stop-the-world pauses when heap usage reaches 92%.",
+          "evidence": "{\"current_p99_ms\": 425, \"baseline_p99_ms\": 438, \"gc_pause_duration_ms\": 180, \"heap_usage_percent\": 92}",
+          "recommendation": "1. Switch from G1GC to ZGC for sub-millisecond pause times\n2. Increase heap from 2GB to 3GB\n3. Add JVM args: -XX:+UseZGC -Xms3g -Xmx3g",
+          "id": "ins-7bcb382a",
+          "timestamp": "2026-02-20T23:59:26.226057+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "medium",
+          "title": "Request batching opportunity",
+          "insight": "Service makes 3591 individual downstream calls per minute to the same dependency. Analysis shows 60% of these could be batched into bulk requests, reducing network overhead and downstream load.",
+          "evidence": "{\"p99_latency_ms\": 2008, \"avg_latency_ms\": 686, \"cpu_usage_percent\": 13, \"rpm\": 3591, \"error_rate_percent\": 4.96, \"health_score\": 5}",
+          "recommendation": "Implement request batching with 50ms collection window. Expected to reduce downstream call volume by 60% and improve p99 latency by ~120ms.",
+          "id": "ins-f1ec19a1",
+          "timestamp": "2026-02-20T23:59:32.227451+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Missing health check endpoint",
+          "insight": "Service lacks a deep health check that validates downstream connectivity. Current /health endpoint only returns 200 OK without checking database or cache reachability. This means the load balancer continues routing traffic to unhealthy instances.",
+          "evidence": "{\"p99_latency_ms\": 2008, \"avg_latency_ms\": 686, \"cpu_usage_percent\": 13, \"rpm\": 3591, \"error_rate_percent\": 4.96, \"health_score\": 5}",
+          "recommendation": "Implement deep health check that validates DB connection, cache connectivity, and critical downstream service reachability.",
+          "id": "ins-8f6c0e59",
+          "timestamp": "2026-02-20T23:59:32.238357+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "medium",
+          "title": "Connection pool saturation approaching",
+          "insight": "Database connection pool utilization is at 82% during peak hours (9-11am UTC). At current growth rate, pool exhaustion is projected within 2 weeks. This will cause request queuing and cascading timeouts.",
+          "evidence": "{\"p99_latency_ms\": 2008, \"avg_latency_ms\": 686, \"cpu_usage_percent\": 13, \"rpm\": 3591, \"error_rate_percent\": 4.96, \"health_score\": 5}",
+          "recommendation": "Increase connection pool max_size from 20 to 40 and enable connection pool monitoring via SSM parameter update.",
+          "id": "ins-2b8e38a2",
+          "timestamp": "2026-02-20T23:59:32.248841+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "[MiniMax] Single Point of Failure - Payment Gateway Coupling",
+          "insight": "The checkout-service has tight synchronous coupling to external payment-gateway with no circuit breaker, fallback provider, or graceful degradation. When payment-gateway degrades, all requests fail or timeout.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 197, \"pass_rate\": 0.96}",
+          "recommendation": "Implement circuit breaker pattern with fast-fail, add secondary payment provider for failover, and introduce asynchronous processing with webhooks for payment callbacks.",
+          "id": "ins-ec4e6f74",
+          "timestamp": "2026-02-20T23:59:56.115145+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "[MiniMax] Incomplete Recovery - 4% Failure Rate Remains",
+          "insight": "Validation shows 96% pass rate post-fix, meaning 4% of checkout requests still failing. Latency recovered to 197ms but root cause (external gateway) remains unresolved.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 197, \"pass_rate\": 0.96}",
+          "recommendation": "Investigate remaining 4% failures - may indicate retry storms, partial timeouts, or orphaned transactions. Add alerting for pass_rate < 99%.",
+          "id": "ins-26efc708",
+          "timestamp": "2026-02-20T23:59:56.130889+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "medium",
+          "title": "[MiniMax] Conservative Initial Connection Pool Configuration",
+          "insight": "Connection pool starting at 10 was 5x too low. Under normal load, pool exhaustion likely caused request queuing. The 2.5x increase (10\u219225) may still be undersized for peak traffic.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 197, \"pass_rate\": 0.96}",
+          "recommendation": "Conduct load testing to determine optimal pool size. Consider dynamic/adaptive connection pooling based on queue depth and gateway health.",
+          "id": "ins-b9a51990",
+          "timestamp": "2026-02-20T23:59:56.145308+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "medium",
+          "title": "[MiniMax] Reactive Rather Than Proactive Monitoring",
+          "insight": "Detection relied on latency spike (3.1x baseline) rather than upstream service health metrics. Payment gateway degradation likely had early warning signs that were not monitored.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 197, \"pass_rate\": 0.96}",
+          "recommendation": "Add dedicated health checks for external payment-gateway (availability, latency, error rate) with SLA-based alerting before downstream impact.",
+          "id": "ins-76af1451",
+          "timestamp": "2026-02-20T23:59:56.156863+00:00",
+          "status": "open"
+        },
+        {
+          "category": "cost",
+          "severity": "low",
+          "title": "[MiniMax] Resource Efficiency Trade-off",
+          "insight": "Increased connection_pool_max from 10 to 25 increases database/connection resources by 150%. If gateway issues persist, this wastes resources on failed connections.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 197, \"pass_rate\": 0.96}",
+          "recommendation": "Implement connection pool recycling and exponential backoff on connection attempts to reduce resource waste during degraded periods.",
+          "id": "ins-6e1c1864",
+          "timestamp": "2026-02-20T23:59:56.171314+00:00",
           "status": "open"
         }
       ]
@@ -356,24 +515,24 @@
     },
     "order-service": {
       "baseline_metrics": {
-        "p99_latency_ms": 2372,
-        "avg_latency_ms": 773,
-        "health_score": 5,
-        "cpu_usage_percent": 15,
-        "rpm": 849,
-        "error_rate_percent": 5.3,
-        "measured_at": "2026-02-20T18:08:59.588627+00:00"
+        "p99_latency_ms": 1012,
+        "avg_latency_ms": 422,
+        "health_score": 43,
+        "cpu_usage_percent": 68,
+        "rpm": 2797,
+        "error_rate_percent": 1.53,
+        "measured_at": "2026-02-20T23:59:43.224389+00:00"
       },
       "patterns": [
         {
           "type": "latency_spike",
           "description": "P99 latency spikes to 3x baseline every 4 hours, lasting 2-3 minutes. Correlates with garbage collection pauses \u2014 heap usage reaches 92% before GC triggers.",
-          "confidence": 0.9101833218403074,
+          "confidence": 0.9301833218403074,
           "recommendation": "Tune JVM GC settings: switch from G1GC to ZGC for sub-millisecond pause times. Increase heap from 2GB to 3GB.",
           "id": "pat-cd1e2d35",
           "first_detected": "2026-02-20T16:48:23.127588+00:00",
-          "last_confirmed": "2026-02-20T16:49:43.004693+00:00",
-          "occurrences": 2
+          "last_confirmed": "2026-02-20T23:59:43.253994+00:00",
+          "occurrences": 3
         },
         {
           "type": "cascade_risk",
@@ -388,11 +547,61 @@
         {
           "type": "correlated_degradation",
           "description": "redis-cache latency spikes correlate with catalog-service and auth-service degradation within 10 seconds. Memory fragmentation ratio exceeds 1.5 during peak load.",
-          "confidence": 0.8541774450132886,
+          "confidence": 0.8741774450132886,
           "recommendation": "Enable Redis active defragmentation. Set maxmemory-policy to allkeys-lru. Schedule periodic MEMORY PURGE during low-traffic windows.",
           "id": "pat-e4adc151",
           "first_detected": "2026-02-20T18:08:59.642843+00:00",
-          "last_confirmed": "2026-02-20T18:08:59.642848+00:00",
+          "last_confirmed": "2026-02-20T23:59:43.258862+00:00",
+          "occurrences": 2
+        },
+        {
+          "type": "cascade_risk",
+          "description": "order-service p99 latency consistently degrades when payment-service latency exceeds 300ms. No circuit breaker protection exists, causing cascading delays.",
+          "confidence": 0.95,
+          "recommendation": "Implement circuit breaker pattern with 1500ms timeout and exponential backoff retry strategy (100ms, 200ms, 400ms max).",
+          "id": "pat-fa504c33",
+          "first_detected": "2026-02-20T23:59:20.372371+00:00",
+          "last_confirmed": "2026-02-20T23:59:20.372386+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "deployment_induced_dependency_failure",
+          "description": "[MiniMax] Recent payment-service v3.2.1 deployment caused 380ms p99 latency (near-doubling), cascading to order-service. This follows a common pattern where backend changes impact downstream consumers without coordinated rollout.",
+          "confidence": 0.95,
+          "recommendation": "Implement canary deployments for payment-service with automated rollback if downstream latency exceeds 300ms for more than 2 minutes.",
+          "id": "pat-b5355348",
+          "first_detected": "2026-02-21T00:00:16.072795+00:00",
+          "last_confirmed": "2026-02-21T00:00:16.072798+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "timeout_threshold_mismatch",
+          "description": "[MiniMax] Circuit breaker timeout (1500ms) set based on current degraded state rather than target baseline. This locks in sub-optimal behavior and delays detection of future degradations.",
+          "confidence": 0.85,
+          "recommendation": "Timeout should be set to 2-4x the recovered baseline (190ms), not the degraded state (2372ms). Current 1500ms is 7.5x baseline.",
+          "id": "pat-b38683f4",
+          "first_detected": "2026-02-21T00:00:16.078095+00:00",
+          "last_confirmed": "2026-02-21T00:00:16.078098+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "single_point_of_recovery",
+          "description": "[MiniMax] Recovery relied entirely on circuit breaker addition. No fallback logic, retry optimization, or payment-service rollback was attempted. If circuit breaker had failed, no secondary protection existed.",
+          "confidence": 0.7,
+          "recommendation": "Add graceful degradation: if payment-service fails, allow order placement with 'payment-pending' status for later processing.",
+          "id": "pat-ea0570d0",
+          "first_detected": "2026-02-21T00:00:16.083501+00:00",
+          "last_confirmed": "2026-02-21T00:00:16.083504+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "incomplete_validation",
+          "description": "[MiniMax] Validation metrics (190ms, 94%) show partial recovery. A fully healthy service should have >99% pass rate. The remaining 6% failure rate indicates underlying issue not fully resolved.",
+          "confidence": 0.9,
+          "recommendation": "Set recovery criteria as both latency <= baseline AND pass rate >= 99% before marking incident resolved.",
+          "id": "pat-df1fbd8e",
+          "first_detected": "2026-02-21T00:00:16.089457+00:00",
+          "last_confirmed": "2026-02-21T00:00:16.089459+00:00",
           "occurrences": 1
         }
       ],
@@ -472,6 +681,116 @@
           "recommendation": "Implement bulkhead pattern to isolate critical payment path from non-critical analytics path. Add async fallback for non-essential downstream calls.",
           "id": "ins-8806eec8",
           "timestamp": "2026-02-20T18:08:59.622301+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "high",
+          "title": "Elevated P99 latency due to payment-service dependency",
+          "insight": "order-service p99 latency is at 2372ms (baseline: 200ms) primarily due to payment-service dependency showing high latency (380ms p99). Recent payment-service deployment (v3.2.1) correlates with latency increase. No circuit breaker protection exists against payment-service degradation.",
+          "evidence": "{\"current_p99_ms\": 2372, \"baseline_p99_ms\": 200, \"payment_service_p99_ms\": 380, \"payment_service_deployment\": \"v3.2.1 at 2026-02-20T19:57:34.582Z\"}",
+          "recommendation": "1. Add circuit breaker with 1500ms timeout to payment-service calls\n2. Implement retry with exponential backoff (100ms, 200ms, 400ms max)\n3. Consider rolling back payment-service to previous version if latency persists",
+          "id": "ins-c9e5df59",
+          "timestamp": "2026-02-20T23:59:15.119622+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Cascade failure risk \u2014 deep dependency chain",
+          "insight": "Service sits on a dependency chain 5 hops deep. A failure at the deepest dependency would cascade through 8 services. No bulkhead isolation exists between the critical and non-critical paths.",
+          "evidence": "{\"p99_latency_ms\": 1012, \"avg_latency_ms\": 422, \"cpu_usage_percent\": 68, \"rpm\": 2797, \"error_rate_percent\": 1.53, \"health_score\": 43}",
+          "recommendation": "Implement bulkhead pattern to isolate critical payment path from non-critical analytics path. Add async fallback for non-essential downstream calls.",
+          "id": "ins-b69275c2",
+          "timestamp": "2026-02-20T23:59:43.231203+00:00",
+          "status": "open"
+        },
+        {
+          "category": "cost",
+          "severity": "medium",
+          "title": "Over-provisioned \u2014 CPU utilization consistently below 15%",
+          "insight": "Average CPU utilization over the past 7 days is 68%, with peak never exceeding 28%. Current instance count of 3 replicas is 2x what traffic requires. Estimated monthly waste: $340.",
+          "evidence": "{\"p99_latency_ms\": 1012, \"avg_latency_ms\": 422, \"cpu_usage_percent\": 68, \"rpm\": 2797, \"error_rate_percent\": 1.53, \"health_score\": 43}",
+          "recommendation": "Scale down from 3 to 2 replicas. Enable HPA with target CPU 60% to handle traffic spikes. Projected savings: $170/month.",
+          "id": "ins-3e8dc4b0",
+          "timestamp": "2026-02-20T23:59:43.237207+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "medium",
+          "title": "Request batching opportunity",
+          "insight": "Service makes 2797 individual downstream calls per minute to the same dependency. Analysis shows 60% of these could be batched into bulk requests, reducing network overhead and downstream load.",
+          "evidence": "{\"p99_latency_ms\": 1012, \"avg_latency_ms\": 422, \"cpu_usage_percent\": 68, \"rpm\": 2797, \"error_rate_percent\": 1.53, \"health_score\": 43}",
+          "recommendation": "Implement request batching with 50ms collection window. Expected to reduce downstream call volume by 60% and improve p99 latency by ~120ms.",
+          "id": "ins-c7395590",
+          "timestamp": "2026-02-20T23:59:43.242348+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "high",
+          "title": "Database query bottleneck detected",
+          "insight": "The slowest downstream dependency is contributing 494ms to total request latency. Unindexed queries on the users table are causing full table scans during peak traffic. Query plan analysis shows sequential scan on 2.3M rows.",
+          "evidence": "{\"p99_latency_ms\": 1012, \"avg_latency_ms\": 422, \"cpu_usage_percent\": 68, \"rpm\": 2797, \"error_rate_percent\": 1.53, \"health_score\": 43}",
+          "recommendation": "Add composite index on (user_id, created_at) to the users table. Expected to reduce query time from {dep_latency}ms to ~15ms.",
+          "id": "ins-b1994e11",
+          "timestamp": "2026-02-20T23:59:43.247452+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "[MiniMax] Sub-optimal circuit breaker timeout configuration",
+          "insight": "The 1500ms circuit breaker timeout is 7.5x the baseline latency (200ms), which may allow slow payment-service calls to consume resources before failing. The recovered latency (190ms) indicates the baseline should be much lower.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 190.0, \"pass_rate\": 94.0}",
+          "recommendation": "Tune circuit breaker timeout to 500-800ms (2.5-4x baseline) for faster failure detection and recovery.",
+          "id": "ins-10b864eb",
+          "timestamp": "2026-02-21T00:00:16.036281+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "[MiniMax] Incomplete recovery - 6% failure rate remaining",
+          "insight": "Validation shows 94% pass rate post-recovery, meaning 1 in 17 requests still fails. This indicates the circuit breaker alone didn't fully resolve the dependency issue.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 190.0, \"pass_rate\": 94.0}",
+          "recommendation": "Investigate remaining 6% failures - implement fallback logic for payment failures or add retry with stricter backoff for intermittent failures.",
+          "id": "ins-85d6fd64",
+          "timestamp": "2026-02-21T00:00:16.042919+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "medium",
+          "title": "[MiniMax] Payment-service degradation undetected until cascading",
+          "insight": "Root cause indicates payment-service v3.2.1 deployment caused 380ms p99 latency (90% above order-service baseline), but no proactive alerts triggered. Detection only occurred after order-service impact.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 190.0, \"pass_rate\": 94.0}",
+          "recommendation": "Add direct latency alerting on payment-service with threshold at 250ms p99 (25% above its own baseline) to catch degradation earlier.",
+          "id": "ins-68e78c82",
+          "timestamp": "2026-02-21T00:00:16.053361+00:00",
+          "status": "open"
+        },
+        {
+          "category": "cost",
+          "severity": "low",
+          "title": "[MiniMax] Potential over-provisioning signal",
+          "insight": "The 1500ms timeout was likely set conservatively, which may lead to longer resource holding during dependency failures, potentially requiring more instances to handle the same load.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 190.0, \"pass_rate\": 94.0}",
+          "recommendation": "After tuning timeout lower, monitor instance utilization and right-size if possible.",
+          "id": "ins-99364d83",
+          "timestamp": "2026-02-21T00:00:16.060533+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "medium",
+          "title": "[MiniMax] Reactive remediation pattern detected",
+          "insight": "Circuit breaker was added post-incident rather than pre-deployment. Order-service was vulnerable from v3.2.0 to incident resolution despite known dependency risks.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 190.0, \"pass_rate\": 94.0}",
+          "recommendation": "Implement pre-deployment dependency health checks in CI/CD pipeline, especially for critical path services.",
+          "id": "ins-ee3f5d28",
+          "timestamp": "2026-02-21T00:00:16.067307+00:00",
           "status": "open"
         }
       ]
@@ -556,6 +875,36 @@
           "id": "pat-a32ee939",
           "first_detected": "2026-02-20T22:54:02.530590+00:00",
           "last_confirmed": "2026-02-20T22:54:02.530596+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "cascade_risk",
+          "description": "Multiple service degradation pattern: Background job failures (Sidekiq) combined with web service errors (Django) and pod crashes, suggesting cascade failure originating from shared backing service (likely Redis/database)",
+          "confidence": 0.8,
+          "recommendation": "1. Implement circuit breakers on backing service connections\n2. Add retry policies with exponential backoff for Sidekiq jobs\n3. Increase monitoring on shared backing services\n4. Set up automated scaling triggers based on error rates",
+          "id": "pat-ce1b4da1",
+          "first_detected": "2026-02-20T23:56:14.564076+00:00",
+          "last_confirmed": "2026-02-20T23:56:14.564079+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "cascade_risk",
+          "description": "Multiple service degradations occurring simultaneously (Sidekiq, Django, Redis) with pod stability issues, suggesting possible cascade failure pattern",
+          "confidence": 0.8,
+          "recommendation": "Implement circuit breakers between services, increase monitoring granularity, and establish clear service dependencies to prevent cascade failures",
+          "id": "pat-bd19f65d",
+          "first_detected": "2026-02-20T23:56:56.159714+00:00",
+          "last_confirmed": "2026-02-20T23:56:56.159732+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "cascade_risk",
+          "description": "Concurrent failures across Django and Sidekiq services often indicate a common underlying infrastructure issue or cascading failure, possibly related to Redis connectivity problems.",
+          "confidence": 0.85,
+          "recommendation": "Implement circuit breakers between services and Redis. Set up automated failover for Redis. Add retry mechanisms with exponential backoff in both Django and Sidekiq services.",
+          "id": "pat-a249274e",
+          "first_detected": "2026-02-20T23:57:09.785511+00:00",
+          "last_confirmed": "2026-02-20T23:57:09.785515+00:00",
           "occurrences": 1
         }
       ],
@@ -1043,6 +1392,446 @@
           "id": "ins-ae2a6a99",
           "timestamp": "2026-02-20T23:39:11.263336+00:00",
           "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Degradations Detected",
+          "insight": "Platform is experiencing multiple service degradations: Sidekiq job processing errors, Django request failures, pod crashes, and high system load. Redis monitoring is also non-functional.",
+          "evidence": "{\"alerts\": 4, \"no_data\": 1, \"ok\": 35, \"total_hosts\": 30, \"cpu_usage_percent\": 1.7, \"memory_usage_percent\": 25.9, \"cpu_throttled\": true}",
+          "recommendation": "1. Debug Sidekiq job failures\n2. Investigate Django application errors\n3. Resolve CrashLoopBackOff pod issue\n4. Restore Redis monitoring\n5. Investigate system load spike",
+          "id": "ins-4b748773",
+          "timestamp": "2026-02-20T23:56:07.666961+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Degradation with Cascade Risk",
+          "insight": "Multiple services are experiencing degradation simultaneously: Sidekiq jobs failing, Django request errors, and pod crashes. System load is elevated and Redis monitoring is unavailable. Pattern suggests possible cascade failure starting from backing services.",
+          "evidence": "{\"alerts\": 4, \"monitors_ok\": 35, \"monitors_no_data\": 1, \"cpu_throttled\": 1708735.6858, \"memory_usage_pct\": 25.9, \"affected_services\": [\"sidekiq\", \"django\", \"redis\"]}",
+          "recommendation": "1. Investigate CrashLoopBackOff pod immediately\n2. Check Redis connectivity and health\n3. Review Sidekiq job failures for backing service dependency issues\n4. Monitor for cascade spread to other services\n5. Consider increasing CPU limits for throttled containers",
+          "id": "ins-26e7f659",
+          "timestamp": "2026-02-20T23:56:08.123381+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Degradations Detected",
+          "insight": "Platform showing multiple signs of degradation: CrashLoopBackOff pods, high Sidekiq error rates, and Django request failures. Redis monitoring is missing data. System load is elevated on some hosts.",
+          "evidence": "{\"alerts\": 4, \"no_data\": 1, \"ok\": 35, \"cpu_throttling\": 6028133.4945, \"memory_usage_percent\": 26.4}",
+          "recommendation": "1. Investigate and resolve CrashLoopBackOff pods\n2. Debug Sidekiq job processing errors\n3. Analyze Django application logs for error patterns\n4. Restore Redis monitoring\n5. Review system resources on high-load hosts",
+          "id": "ins-bc00ba0e",
+          "timestamp": "2026-02-20T23:56:47.199448+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Degradations Detected",
+          "insight": "Platform health check reveals multiple critical issues: 1) Pod(s) in CrashLoopBackOff state 2) High error rates in Sidekiq job processing 3) Django request handling errors 4) High system load on some hosts. While infrastructure metrics show moderate resource usage (26% memory utilization), the error patterns suggest application-level issues rather than resource constraints.",
+          "evidence": "{\"alerts\": 4, \"total_monitors\": 40, \"cpu_usage\": 54607654.5311, \"memory_usage_percent\": 26, \"affected_services\": [\"sidekiq\", \"django\"]}",
+          "recommendation": "1. Investigate CrashLoopBackOff pod logs immediately 2. Debug Sidekiq job processor errors 3. Analyze Django application logs for error patterns 4. Review system load distribution across hosts 5. Check Redis monitoring configuration",
+          "id": "ins-07ec0456",
+          "timestamp": "2026-02-20T23:56:49.628926+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Degradations Detected",
+          "insight": "Multiple critical services are experiencing degradation: Sidekiq job processing showing high error rates, Django request handling errors, and pod stability issues (CrashLoopBackOff). System load is elevated on some hosts and Redis monitoring is in No Data state. Container metrics show some CPU throttling which may be contributing to performance issues.",
+          "evidence": "{\"monitors_alerting\": 4, \"monitors_ok\": 35, \"redis_status\": \"No Data\", \"container_cpu_throttled\": 6061144.5628, \"container_mem_usage_pct\": 26}",
+          "recommendation": "1. Investigate and resolve CrashLoopBackOff pod state\n2. Check Sidekiq job queues and worker health\n3. Review Django application logs for error patterns\n4. Verify Redis connectivity and restore monitoring\n5. Consider increasing CPU limits to reduce throttling",
+          "id": "ins-55fe54a9",
+          "timestamp": "2026-02-20T23:56:50.256244+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Degradations Detected",
+          "insight": "Platform experiencing multiple service degradations: Django request errors, Sidekiq job failures, and pod crashes. Resource utilization is moderate but some services show signs of instability. Redis monitoring shows gaps with \"No Data\" state.",
+          "evidence": "{\"alerts\": 4, \"total_monitors\": 40, \"cpu_usage\": 53639499.3667, \"mem_usage_pct\": 26, \"critical_services\": [\"django\", \"sidekiq\", \"redis\"]}",
+          "recommendation": "1. Investigate CrashLoopBackOff pods and resolve application errors\n2. Debug Django request failures and Sidekiq job errors\n3. Restore Redis monitoring and verify service health\n4. Review system load on affected hosts\n5. Consider adjusting resource limits based on CPU throttling data",
+          "id": "ins-ded8d200",
+          "timestamp": "2026-02-20T23:56:50.848750+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "Platform is experiencing multiple critical issues: CrashLoopBackOff pods, high Sidekiq error rates, Django application errors, and elevated system load. Redis monitoring is also unavailable. Resource utilization shows some CPU throttling but memory usage is stable.",
+          "evidence": "{\"alerts\": 4, \"no_data\": 1, \"ok\": 35, \"cpu_throttling\": 5059723.9213, \"memory_usage_pct\": 26.5}",
+          "recommendation": "1. Investigate CrashLoopBackOff pods immediately\n2. Debug Sidekiq job processing errors\n3. Analyze Django application errors\n4. Restore Redis monitoring\n5. Review system load distribution",
+          "id": "ins-efe2c099",
+          "timestamp": "2026-02-20T23:56:57.659344+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Degradations Detected",
+          "insight": "Platform-wide analysis reveals multiple service degradations: 1) High error rates in Sidekiq job processing and Django requests 2) Pod CrashLoopBackOff detected 3) High system load on at least one host 4) Redis monitoring gap. While infrastructure metrics show moderate resource usage (CPU ~1.6%, Memory ~26.5%), the service-level issues indicate application problems.",
+          "evidence": "{\"monitors_summary\":{\"total\":40,\"alerting\":4,\"ok\":35,\"no_data\":1},\"resource_usage\":{\"cpu_usage_percent\":1.6,\"memory_usage_percent\":26.5,\"cpu_throttling_detected\":true},\"critical_alerts\":[\"Sidekiq job errors\",\"Django request errors\",\"Pod CrashLoopBackOff\",\"High system load\"]}",
+          "recommendation": "1) Investigate Sidekiq job failures - check job queues and worker logs 2) Debug Django application errors - review error logs and recent code deployments 3) Analyze CrashLoopBackOff pod logs and events 4) Check system resources on high-load host 5) Verify Redis monitoring configuration",
+          "id": "ins-3d07b94d",
+          "timestamp": "2026-02-20T23:57:00.243919+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Degradation - Web and Job Processing",
+          "insight": "Multiple services showing degradation: Sidekiq job processing and Django request handling experiencing high error rates. Pod CrashLoopBackOff detected along with system load issues. Redis monitoring shows gaps. CPU throttling observed in some containers.",
+          "evidence": "{\"monitors_alert\": 4, \"monitors_ok\": 35, \"cpu_throttling\": 5252609.8734, \"memory_usage_percent\": 26.5, \"total_hosts\": 30}",
+          "recommendation": "1. Investigate and resolve CrashLoopBackOff pod state\n2. Debug Sidekiq job processing errors\n3. Analyze Django request failures\n4. Restore Redis monitoring\n5. Review and adjust CPU limits where throttling is observed\n6. Implement circuit breakers for web services",
+          "id": "ins-914cf2a6",
+          "timestamp": "2026-02-20T23:57:02.024444+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Degradations",
+          "insight": "Multiple critical services are experiencing issues simultaneously: Django requests showing high error rates, Sidekiq job processing failures, and pod stability issues (CrashLoopBackOff). Redis monitoring is also in No Data state, suggesting possible connectivity issues.",
+          "evidence": "{\"alerts\": 4, \"ok_monitors\": 35, \"no_data\": 1, \"affected_services\": [\"django\", \"sidekiq\", \"redis\"], \"system_load\": \"high\"}",
+          "recommendation": "1. Investigate CrashLoopBackOff pod immediately\n2. Review Django and Sidekiq error logs\n3. Check Redis connectivity\n4. Monitor system load on affected hosts\n5. Review recent deployments for potential correlation",
+          "id": "ins-62ac1907",
+          "timestamp": "2026-02-20T23:57:05.104697+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Degradation Detected",
+          "insight": "Multiple critical services are showing error conditions: Sidekiq job processing, Django request handling, and Kubernetes pod stability issues. System load is elevated on some hosts and Redis monitoring is unavailable.",
+          "evidence": "{\"monitors_summary\": {\"total\": 40, \"alert\": 4, \"ok\": 35, \"no_data\": 1}, \"resource_usage\": {\"cpu_usage_avg\": 58714333.6969, \"mem_usage_percent\": 26.5}, \"critical_alerts\": [\"High Error Rate on Sidekiq jobs\", \"High Error Rate on Django requests\", \"Pod CrashloopBackOff\", \"High system load\"]}",
+          "recommendation": "1. Investigate CrashloopBackOff pod logs and restart if needed\n2. Review Sidekiq job error patterns and potential queue backlog\n3. Check Django application logs and recent code deployments\n4. Verify Redis connectivity and monitoring agent status\n5. Analyze system load patterns on affected hosts",
+          "id": "ins-0618f27e",
+          "timestamp": "2026-02-20T23:57:19.348212+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Degradations Detected",
+          "insight": "Platform health check reveals multiple service degradations: 1) High error rates in Django request handling, 2) Sidekiq job processing failures, 3) Redis monitoring gap, and 4) Elevated system load on some hosts. While resource utilization is generally healthy (26.4% memory, 1.6% CPU), the presence of CPU throttling suggests potential constraints.",
+          "evidence": "{\"alerts\": 3, \"no_data\": 1, \"total_hosts\": 30, \"cpu_throttled\": 1341481.6679, \"memory_usage_pct\": 26.4, \"error_services\": [\"django\", \"sidekiq\"]}",
+          "recommendation": "1. Investigate Django application errors - check logs and recent deployments\n2. Analyze Sidekiq job failures - review job queues and error patterns\n3. Restore Redis monitoring - verify Redis health and monitoring agent\n4. Review system load distribution - consider rebalancing workloads\n5. Monitor CPU throttling - may need to adjust resource limits",
+          "id": "ins-7e398e8a",
+          "timestamp": "2026-02-20T23:59:01.915828+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Platform Health Check - Application Layer Issues",
+          "insight": "Platform infrastructure is healthy but experiencing application-level degradation in Django and Sidekiq services. System load is elevated on some hosts. Redis monitoring shows gaps. Overall resource utilization is within safe limits with CPU at 1.6% and memory at 26.4%.",
+          "evidence": "{\"alerts\": 3, \"monitors_ok\": 36, \"monitors_no_data\": 1, \"cpu_usage_percent\": 1.6, \"memory_usage_percent\": 26.4, \"total_hosts\": 30}",
+          "recommendation": "1. Investigate Django request errors and Sidekiq job failures as top priority\n2. Analyze system load patterns on affected hosts\n3. Restore Redis monitoring\n4. Review application error patterns for potential code-level issues",
+          "id": "ins-6a05fbdb",
+          "timestamp": "2026-02-20T23:59:05.017106+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Degradations Detected",
+          "insight": "Platform-wide analysis reveals multiple service degradations: 1) High Django request error rates 2) Sidekiq job processing errors 3) System load issues on multiple hosts 4) Redis monitoring gap",
+          "evidence": "{\"alerts\": 3, \"active_metrics\": 2641, \"critical_alerts\": [\"High Error Rate on Django requests\", \"High Error Rate on Sidekiq jobs\", \"System load is high\"], \"monitoring_gaps\": [\"Redis memory consumption\"]}",
+          "recommendation": "1) Investigate Django request errors - priority due to customer impact 2) Debug Sidekiq job failures 3) Analyze system load distribution 4) Restore Redis monitoring 5) Consider load balancing if system load issues persist",
+          "id": "ins-63c0aaf0",
+          "timestamp": "2026-02-21T00:00:08.966391+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Degradation Detected",
+          "insight": "Platform is experiencing multiple service degradations: high error rates in Django requests and Sidekiq job processing, combined with elevated system load on multiple hosts. Redis monitoring is also in a No Data state, indicating possible monitoring gaps.",
+          "evidence": "{\"alerts\": 3, \"total_monitors\": 40, \"hosts\": 30, \"critical_issues\": [\"High system load\", \"Sidekiq job errors\", \"Django request errors\"], \"redis_monitoring\": \"No Data\"}",
+          "recommendation": "1. Investigate Django request errors and Sidekiq job failures as top priority\n2. Analyze system load distribution and consider resource reallocation\n3. Restore Redis monitoring\n4. Review application logs for error patterns\n5. Consider temporary scale-up of affected services",
+          "id": "ins-38fd20a7",
+          "timestamp": "2026-02-21T00:00:15.011491+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Platform Health Check - Multiple Minor Issues Detected",
+          "insight": "System-wide health check reveals several minor issues requiring attention: 1) High system load on some hosts, 2) StatefulSet replica mismatches, 3) Missing monitoring data for Redis memory and pod restarts, 4) APM anomalies detected by Watchdog. While system is operational, these issues indicate increasing platform stress.",
+          "evidence": "{\"alerts\": 2, \"warnings\": 1, \"no_data\": 2, \"cpu_usage_pct\": 1.6, \"memory_usage_pct\": 24, \"system_load\": \"high\", \"statefulset\": \"warning\"}",
+          "recommendation": "1. Investigate and address high system load on affected hosts\n2. Audit StatefulSet configurations and adjust replica counts\n3. Verify Redis monitoring agent configuration\n4. Investigate root cause of APM anomalies\n5. Restore pod restart monitoring\n6. Consider implementing automated scaling policies if load issues persist",
+          "id": "ins-1309f61f",
+          "timestamp": "2026-02-21T00:21:08.436568+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Platform Health Check - Multiple Minor Issues Detected",
+          "insight": "System health check reveals multiple minor issues requiring attention: high system load on some hosts, APM anomalies detected by Watchdog, StatefulSet replica warnings, and monitoring gaps in Redis and pod restart metrics. Overall platform stability is maintained but proactive investigation is recommended.",
+          "evidence": "{\"alerts\": {\"critical\": 2, \"warning\": 1, \"no_data\": 2}, \"resource_usage\": {\"cpu_usage_percent\": 1.6, \"memory_usage_percent\": 24.3}, \"total_hosts\": 30}",
+          "recommendation": "1. Investigate hosts with high system load\n2. Review APM traces for anomaly root cause\n3. Audit StatefulSet configurations\n4. Fix Redis monitoring agent configuration\n5. Restore pod restart monitoring\n6. Consider implementing automated scaling policies",
+          "id": "ins-c98f136d",
+          "timestamp": "2026-02-21T00:21:09.620928+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Platform Health Check - Minor Issues Detected",
+          "insight": "System-wide health check reveals generally stable operation with some concerns: 1) High system load on some hosts, 2) Watchdog anomaly in APM, 3) StatefulSet replica warning, 4) Some CPU throttling observed. Most services are healthy with 35/40 monitors in OK state. Memory utilization is moderate at ~24%.",
+          "evidence": "{\"alerts\": 2, \"warnings\": 1, \"no_data\": 2, \"ok_monitors\": 35, \"cpu_throttling\": 2715640.6669, \"memory_usage_pct\": 24}",
+          "recommendation": "1. Investigate high system load alert source\n2. Review Watchdog anomaly details for patterns\n3. Audit StatefulSet configurations\n4. Verify Redis monitoring setup\n5. Monitor CPU throttling and consider resource limit adjustments if persistent",
+          "id": "ins-9c5b622d",
+          "timestamp": "2026-02-21T00:21:12.045475+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Platform Health Check - Multiple Minor Issues Detected",
+          "insight": "System-wide health check reveals multiple minor issues requiring attention: 1) High system load on some hosts, 2) Watchdog anomaly in APM services, 3) StatefulSet replica warnings, and 4) Monitoring gaps in Redis and pod restart metrics. While overall platform stability is maintained, these issues suggest growing system stress.",
+          "evidence": "{\"total_monitors\":40,\"alert_count\":2,\"warning_count\":1,\"no_data_count\":2,\"cpu_throttling\":2715640.6669,\"memory_usage_percent\":24.3}",
+          "recommendation": "1) Investigate high system load alerts and identify affected hosts for potential resource reallocation, 2) Review Watchdog anomaly details and correlate with service metrics, 3) Audit StatefulSet configurations and adjust replica counts if needed, 4) Restore missing monitoring for Redis memory and pod restarts.",
+          "id": "ins-132c795a",
+          "timestamp": "2026-02-21T00:21:13.954116+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Platform Health Check - Multiple Minor Issues Detected",
+          "insight": "System-wide health check revealed several minor issues requiring attention: 1) High system load on some hosts, 2) StatefulSet replica warning, 3) Missing metrics for Redis memory and pod restarts, 4) APM anomaly detected by Watchdog. Overall platform stability is not immediately threatened but these issues should be addressed.",
+          "evidence": "{\"alerts\": 2, \"warnings\": 1, \"no_data\": 2, \"cpu_throttling\": 2715640.6669, \"memory_usage_pct\": 24, \"total_monitors\": 40, \"ok_monitors\": 35}",
+          "recommendation": "1. Investigate high system load alert\n2. Reconcile StatefulSet replica counts\n3. Restore Redis memory and pod restart metric collection\n4. Analyze APM data for anomaly source\n5. Monitor CPU throttling and consider proactive scaling",
+          "id": "ins-1392827a",
+          "timestamp": "2026-02-21T00:21:56.040809+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Platform Health Check - Multiple Minor Issues Detected",
+          "insight": "System-wide health check revealed several issues requiring attention: 1) High system load on some hosts, 2) APM anomalies detected by Watchdog, 3) StatefulSet replica warning, 4) Redis monitoring gaps. Overall platform stability is maintained but these issues should be addressed to prevent potential degradation.",
+          "evidence": "{\"alerts\": 2, \"warnings\": 1, \"no_data\": 2, \"cpu_usage_percent\": 1.6, \"memory_usage_percent\": 24.3, \"total_hosts\": 30}",
+          "recommendation": "1. Investigate high system load root cause\n2. Review APM anomalies in detail\n3. Audit StatefulSet configurations\n4. Fix Redis monitoring gaps\n5. Consider implementing automated scaling policies",
+          "id": "ins-fae1857e",
+          "timestamp": "2026-02-21T00:21:59.152128+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Platform Health Check - Multiple Minor Issues Detected",
+          "insight": "System-wide health check reveals several minor issues requiring attention: 1) High system load on some hosts, 2) StatefulSet replica warnings, 3) Redis monitoring gaps, and 4) Some CPU throttling observed. Most services are operating normally but these issues could impact reliability if left unaddressed.",
+          "evidence": "{\"monitors_summary\":{\"total\":40,\"alerting\":2,\"warning\":1,\"no_data\":2,\"ok\":35},\"resource_metrics\":{\"cpu_throttling\":2715640.6669,\"memory_usage_percent\":24}}",
+          "recommendation": "1. Investigate hosts with high system load\n2. Review and adjust StatefulSet configurations\n3. Fix Redis monitoring configuration\n4. Monitor CPU throttling and consider resource adjustments if it increases\n5. Set up automated scaling policies for services showing resource pressure",
+          "id": "ins-34c04955",
+          "timestamp": "2026-02-21T00:22:31.711935+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Platform Health Check - Multiple Active Alerts",
+          "insight": "System-wide health check reveals 2 critical alerts and 1 warning: high system load, Watchdog anomaly, and StatefulSet replica issues. While most services are operational, there are concerning signals in resource utilization and gaps in monitoring coverage.",
+          "evidence": "{\"alerts\": 2, \"warnings\": 1, \"no_data\": 2, \"cpu_throttling\": 2715640.6669, \"memory_usage_pct\": 24.3}",
+          "recommendation": "1. Investigate high system load alert and Watchdog anomaly\n2. Review StatefulSet configurations and scaling\n3. Restore Redis memory consumption monitoring\n4. Re-enable Kubernetes pod restart monitoring\n5. Investigate source of CPU throttling",
+          "id": "ins-38b942fd",
+          "timestamp": "2026-02-21T00:22:39.499603+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Platform Health Check - Multiple Warning Signs",
+          "insight": "System-wide health check reveals multiple concerning signals: 1) High system load on hosts 2) Watchdog anomalies in APM 3) StatefulSet replica warnings 4) Redis monitoring gaps. While most services are functional, these indicators suggest emerging stability risks.",
+          "evidence": "{\"total_monitors\": 40, \"alert_count\": 2, \"warning_count\": 1, \"no_data_count\": 2, \"ok_count\": 35, \"affected_systems\": [\"system_load\", \"apm\", \"kubernetes_statefulset\", \"redis\"]}",
+          "recommendation": "1. Investigate high system load root cause\n2. Review Watchdog anomaly details and affected services\n3. Audit StatefulSet configurations and scaling policies\n4. Restore Redis monitoring\n5. Implement proactive scaling policies based on load patterns",
+          "id": "ins-0cd3628e",
+          "timestamp": "2026-02-21T00:24:09.345324+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Platform Health Check - Multiple Minor Issues Detected",
+          "insight": "System-wide health check reveals several areas requiring attention: 1) High system load on some hosts, 2) StatefulSet replica warning, 3) Missing Redis memory metrics, 4) Missing Kubernetes pod restart metrics. While most services are operational, these issues could impact platform reliability if not addressed.",
+          "evidence": "{\"total_monitors\":40,\"alert_count\":2,\"warning_count\":1,\"no_data_count\":2,\"critical_alerts\":[\"System load is high\",\"Watchdog Anomaly\"],\"missing_metrics\":[\"redis.mem.used\",\"kubernetes.containers.restarts\"]}",
+          "recommendation": "1. Investigate and address high system load on affected hosts\n2. Review and adjust StatefulSet configurations\n3. Restore Redis memory monitoring\n4. Fix Kubernetes pod restart monitoring\n5. Consider load balancing review for affected nodes",
+          "id": "ins-a2b23a6c",
+          "timestamp": "2026-02-21T00:24:50.158414+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Platform Health Check - Multiple Minor Issues",
+          "insight": "System-wide health check reveals several minor issues: 1) High system load on some hosts 2) StatefulSet replica warnings 3) Redis monitoring gaps. Most services are healthy but there are monitoring gaps that need attention.",
+          "evidence": "{\"total_monitors\": 40, \"alert_state\": {\"OK\": 35, \"Alert\": 2, \"Warning\": 1, \"No Data\": 2}, \"affected_systems\": [\"Redis\", \"Kubernetes StatefulSets\", \"System Load\"]}",
+          "recommendation": "1) Investigate high system load root cause 2) Review StatefulSet configurations 3) Restore Redis monitoring 4) Implement missing pod restart monitoring",
+          "id": "ins-bd0e79a4",
+          "timestamp": "2026-02-21T00:24:54.038806+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Platform Health Check - Multiple Active Alerts",
+          "insight": "System-wide health check reveals 2 critical alerts and 1 warning: high system load on hosts, Watchdog anomaly in APM metrics, and Kubernetes StatefulSet replica issues. Additionally, monitoring gaps detected in Redis memory consumption and Kubernetes pod restart tracking.",
+          "evidence": "{\"total_monitors\":40,\"alert_status\":{\"ok\":35,\"alert\":2,\"warning\":1,\"no_data\":2},\"critical_alerts\":[\"System load is high\",\"Watchdog Anomaly\"],\"monitoring_gaps\":[\"Redis memory consumption\",\"Kubernetes pod restarts\"]}",
+          "recommendation": "1. Investigate high system load on affected hosts\n2. Review StatefulSet configurations and current state\n3. Restore monitoring for Redis memory and K8s pod restarts\n4. Analyze Watchdog anomaly details\n5. Implement memory consumption alerts for critical services",
+          "id": "ins-e7ce8b07",
+          "timestamp": "2026-02-21T00:24:54.492137+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Platform Health Check - Multiple Monitoring Gaps and System Load Issues",
+          "insight": "Current platform state shows several concerning signals: 1) High system load on some hosts 2) StatefulSet scaling issues 3) Missing monitoring data for Redis and pod restarts. While core services are functioning, these issues could impact platform reliability.",
+          "evidence": "{\"alerts\": {\"critical\": 2, \"warning\": 1, \"no_data\": 2}, \"affected_systems\": [\"Redis\", \"Kubernetes StatefulSets\", \"Host System Load\"], \"monitor_states\": {\"OK\": 35, \"Alert\": 2, \"No Data\": 2, \"Warn\": 1}}",
+          "recommendation": "1) Investigate and address high system load immediately 2) Fix Redis monitoring gap 3) Review and adjust StatefulSet configurations 4) Restore pod restart monitoring 5) Implement predictive load monitoring",
+          "id": "ins-5b6a4eab",
+          "timestamp": "2026-02-21T00:24:54.785842+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Health Issues Detected",
+          "insight": "System health check reveals multiple issues: 1) High Sidekiq error rates affecting background job processing 2) System load alerts on multiple hosts 3) Redis monitoring gaps 4) Kubernetes StatefulSet replica misalignment. While customer-facing services are operational, background processing and infrastructure showing signs of stress.",
+          "evidence": "{\"alerts\": {\"critical\": 3, \"warning\": 1, \"no_data\": 2}, \"affected_systems\": [\"sidekiq\", \"redis\", \"kubernetes_statefulsets\"], \"total_hosts\": 30}",
+          "recommendation": "1) Investigate and resolve Sidekiq error spike 2) Analyze system load distribution and consider load balancing 3) Restore Redis monitoring 4) Audit and correct StatefulSet configurations 5) Implement additional monitoring for background job success rates",
+          "id": "ins-7ef20f03",
+          "timestamp": "2026-02-21T00:28:18.704854+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Health Issues Detected",
+          "insight": "System-wide health check reveals multiple service issues: high Sidekiq error rates, system load problems, and StatefulSet scaling issues. Redis monitoring is currently blind (no data state).",
+          "evidence": "{\"alerts\": {\"critical\": 3, \"warning\": 1, \"no_data\": 2}, \"affected_services\": [\"sidekiq\", \"redis\", \"kubernetes_statefulsets\"]}",
+          "recommendation": "1. Investigate Sidekiq error spike 2. Address system load issues 3. Review StatefulSet configurations 4. Restore Redis monitoring 5. Validate pod restart monitoring",
+          "id": "ins-d9a52fec",
+          "timestamp": "2026-02-21T00:28:25.709006+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "System-wide analysis reveals three critical alerts: high system load, Sidekiq job processing errors, and a Watchdog anomaly. Additionally, Redis monitoring is in a No Data state and there are Kubernetes StatefulSet issues.",
+          "evidence": "{\"alerts\": {\"critical\": 3, \"warning\": 1, \"no_data\": 2}, \"affected_services\": [\"sidekiq\", \"redis\", \"kubernetes\"], \"total_hosts\": 30}",
+          "recommendation": "1. Investigate and resolve Sidekiq job processing errors\n2. Check system load on affected hosts and consider load balancing\n3. Restore Redis monitoring\n4. Review and fix Kubernetes StatefulSet configuration\n5. Implement monitoring for pod restarts",
+          "id": "ins-e51d54ae",
+          "timestamp": "2026-02-21T00:28:57.853044+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Critical Service Issues Detected",
+          "insight": "System-wide analysis reveals three critical alerts: high system load, Sidekiq job processing errors, and a Watchdog anomaly. Additionally, there are StatefulSet replica issues and monitoring gaps in Redis and Kubernetes pod restarts.",
+          "evidence": "{\"alerts\": {\"critical\": 3, \"warning\": 1, \"no_data\": 2}, \"total_hosts\": 30, \"affected_systems\": [\"sidekiq\", \"statefulset\", \"redis\"]}",
+          "recommendation": "1. Investigate and resolve Sidekiq error rate spike\n2. Address system load issues on affected hosts\n3. Review and adjust StatefulSet configurations\n4. Restore Redis memory consumption monitoring\n5. Verify Kubernetes pod restart monitoring configuration",
+          "id": "ins-b9c35ed4",
+          "timestamp": "2026-02-21T00:29:06.613932+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple System-Wide Issues Detected",
+          "insight": "Platform health check reveals multiple issues: 1) High Sidekiq error rate affecting background jobs 2) Redis monitoring gaps 3) Kubernetes StatefulSet warnings 4) High system load on some hosts. While most services are operational (34/40 monitors OK), these issues require attention to prevent service degradation.",
+          "evidence": "{\"total_monitors\": 40, \"ok_monitors\": 34, \"alert_monitors\": 3, \"warning_monitors\": 1, \"no_data_monitors\": 2, \"critical_alerts\": [\"High Sidekiq error rate\", \"System load alerts\", \"Watchdog anomalies\"]}",
+          "recommendation": "1. Investigate and resolve Sidekiq job errors 2. Restore Redis monitoring 3. Review and adjust StatefulSet configurations 4. Analyze and address high system load 5. Verify monitoring coverage gaps",
+          "id": "ins-05a5c08d",
+          "timestamp": "2026-02-21T00:29:08.378112+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Health Issues Detected",
+          "insight": "Platform-wide analysis reveals several concurrent issues: 1) High Sidekiq job error rates 2) System load alerts on multiple hosts 3) StatefulSet replica warnings 4) Redis monitoring gaps",
+          "evidence": "{\"total_monitors\":40,\"alerting\":3,\"warning\":1,\"no_data\":2,\"ok\":34,\"critical_alerts\":[\"Sidekiq job errors\",\"System load\",\"Watchdog anomaly\"]}",
+          "recommendation": "1. Investigate Sidekiq error spike as highest priority\n2. Check Redis connectivity and monitoring\n3. Review StatefulSet configurations\n4. Analyze system load distribution\n5. Set up automated scaling policies for affected services",
+          "id": "ins-433ba90b",
+          "timestamp": "2026-02-21T00:29:13.030909+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Health Issues Detected",
+          "insight": "Platform-wide health check reveals multiple issues: 1) High Sidekiq job error rates 2) System load issues on some hosts 3) StatefulSet configuration warnings 4) Missing Redis and pod restart monitoring data",
+          "evidence": "{\"alerts\": {\"critical\": 3, \"warning\": 1, \"no_data\": 2}, \"affected_systems\": [\"sidekiq\", \"redis\", \"kubernetes\"], \"total_hosts\": 30}",
+          "recommendation": "1) Investigate and resolve Sidekiq job failures 2) Address system load issues 3) Review and correct StatefulSet configuration 4) Restore Redis and pod restart monitoring",
+          "id": "ins-2104d9b7",
+          "timestamp": "2026-02-21T00:29:16.379458+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple System-Wide Issues Detected",
+          "insight": "Platform-wide analysis reveals several concurrent issues: high system load on hosts, Sidekiq job processing errors, and StatefulSet configuration mismatches. While core services remain operational, these issues indicate potential scaling or resource allocation problems.",
+          "evidence": "{\"alerts\": 3, \"warnings\": 1, \"no_data\": 2, \"total_hosts\": 30, \"affected_systems\": [\"sidekiq\", \"redis\", \"kubernetes_statefulsets\"]}",
+          "recommendation": "1. Investigate high system load root cause\n2. Debug Sidekiq job processing errors\n3. Verify Redis monitoring configuration\n4. Review and adjust StatefulSet configurations\n5. Consider scaling resources for affected services",
+          "id": "ins-0b88f07b",
+          "timestamp": "2026-02-21T00:29:18.698328+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Health Issues Detected",
+          "insight": "System analysis reveals multiple concurrent issues: high system load on hosts, Sidekiq job processing errors, and StatefulSet replica warnings. Additionally, monitoring gaps in Redis and Kubernetes pod restarts require attention.",
+          "evidence": "{\"alerts\": 3, \"warnings\": 1, \"no_data\": 2, \"affected_systems\": [\"Sidekiq\", \"Redis\", \"Kubernetes StatefulSets\"], \"total_hosts\": 30}",
+          "recommendation": "1. Investigate and address high system load\n2. Debug and fix Sidekiq job failures\n3. Review StatefulSet configurations\n4. Restore missing monitoring coverage for Redis and pod restarts\n5. Implement load balancing improvements",
+          "id": "ins-6c33c3a6",
+          "timestamp": "2026-02-21T00:29:21.410509+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple System-Wide Issues Detected",
+          "insight": "System health check reveals multiple issues: 1) High Sidekiq job error rates 2) System load alerts on hosts 3) StatefulSet replica warnings 4) Redis monitoring gaps",
+          "evidence": "{\"total_monitors\":40,\"alerts\":3,\"warnings\":1,\"no_data\":2,\"ok\":34,\"affected_systems\":[\"sidekiq\",\"kubernetes\",\"redis\"]}",
+          "recommendation": "1) Investigate Sidekiq error spike 2) Analyze system load patterns 3) Review StatefulSet configurations 4) Restore Redis monitoring",
+          "id": "ins-7b826f4f",
+          "timestamp": "2026-02-21T00:29:36.488616+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Multiple Service Health Issues Detected",
+          "insight": "System-wide analysis reveals three critical issues: 1) High system load across hosts, 2) Elevated Sidekiq job error rates, and 3) Watchdog anomaly detection in APM. Infrastructure is generally healthy (34/40 monitors OK) but showing stress signs. Redis monitoring appears to be offline.",
+          "evidence": "{\"monitors_summary\": {\"total\": 40, \"ok\": 34, \"alert\": 3, \"no_data\": 2, \"warning\": 1}, \"active_metrics\": 258, \"critical_alerts\": [\"System load is high\", \"High Error Rate on Sidekiq jobs\", \"Watchdog Anomaly detected\"]}",
+          "recommendation": "1) Investigate and resolve Sidekiq job failures as top priority, 2) Analyze system load distribution and consider resource reallocation, 3) Restore Redis monitoring, 4) Review Kubernetes StatefulSet configurations, 5) Implement automated checkout failure monitoring.",
+          "id": "ins-bbc16694",
+          "timestamp": "2026-02-21T00:29:40.779447+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Platform Health Check - Background Job Processing Issues",
+          "insight": "System-wide health check reveals high error rates in Sidekiq job processing and system load issues. While most services are healthy, background processing system showing signs of degradation. Redis monitoring shows gaps with No Data state.",
+          "evidence": "{\"alerts\": 3, \"warnings\": 1, \"total_hosts\": 30, \"active_metrics\": 266, \"critical_alerts\": [\"High Sidekiq Error Rate\", \"System Load Alert\", \"Watchdog Anomaly\"]}",
+          "recommendation": "1. Investigate Sidekiq job processing errors immediately\n2. Review system load on affected hosts\n3. Restore Redis monitoring\n4. Investigate Kubernetes StatefulSet replica warning\n5. Set up missing pod restart monitoring",
+          "id": "ins-ccdcdb82",
+          "timestamp": "2026-02-21T00:29:41.633559+00:00",
+          "status": "open"
         }
       ]
     },
@@ -1092,6 +1881,17 @@
           "recommendation": "1. Verify Redis service is running properly\n2. Check Datadog agent configuration for Redis integration\n3. Validate Redis metrics collection endpoints\n4. Review any recent changes to Redis configuration",
           "id": "ins-0b282243",
           "timestamp": "2026-02-20T23:16:09.216333+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "Redis Monitoring Data Gap",
+          "insight": "Redis monitoring is in No Data state, suggesting potential connectivity issues or service disruption.",
+          "evidence": "{\"monitor_id\": 259579200, \"state\": \"No Data\", \"name\": \"[Redis] High memory consumption\"}",
+          "recommendation": "1. Verify Redis service is running\n2. Check Datadog agent connectivity to Redis\n3. Review Redis configuration\n4. Validate monitoring integration settings",
+          "id": "ins-eb9ab8c2",
+          "timestamp": "2026-02-20T23:57:16.746273+00:00",
           "status": "open"
         }
       ]
@@ -1242,6 +2042,17 @@
           "id": "ins-5fba8bfe",
           "timestamp": "2026-02-20T23:16:16.994737+00:00",
           "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Pod CrashLoopBackOff Detected",
+          "insight": "One or more pods are in CrashLoopBackOff state, indicating repeated container startup failures.",
+          "evidence": "{\"monitor_id\": 259825426, \"state\": \"Alert\", \"name\": \"[Kubernetes] Pod CrashloopBackOff\"}",
+          "recommendation": "1. Check pod logs for startup errors\n2. Verify container health check configuration\n3. Review recent deployments that might have introduced the issue\n4. Ensure resource limits are appropriate",
+          "id": "ins-b24f6259",
+          "timestamp": "2026-02-20T23:57:11.872377+00:00",
+          "status": "open"
         }
       ]
     },
@@ -1280,6 +2091,17 @@
           "recommendation": "1. Review Sidekiq job logs for error patterns\n2. Check dependent service health\n3. Implement automatic retry policies for failed jobs\n4. Consider circuit breakers for external service calls",
           "id": "ins-1d3c543b",
           "timestamp": "2026-02-20T23:01:09.042326+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "High Sidekiq Job Error Rate",
+          "insight": "Sidekiq worker service is experiencing elevated error rates in job processing, which could impact background task completion.",
+          "evidence": "{\"monitor_id\": 259580847, \"state\": \"Alert\", \"name\": \"[operation:sidekiq.job] High Error Rate\"}",
+          "recommendation": "1. Check Sidekiq error logs for specific job failures\n2. Verify Redis connection stability\n3. Consider implementing retry logic with exponential backoff",
+          "id": "ins-a099f465",
+          "timestamp": "2026-02-20T23:57:01.202177+00:00",
           "status": "open"
         }
       ]
@@ -1428,6 +2250,459 @@
           "status": "open"
         }
       ]
+    },
+    "django-app": {
+      "baseline_metrics": {},
+      "patterns": [],
+      "insights": [
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "High Django Request Error Rate",
+          "insight": "Django application is experiencing elevated HTTP request error rates, indicating potential API or application logic issues.",
+          "evidence": "{\"monitor_id\": 259580849, \"state\": \"Alert\", \"name\": \"[operation:django.request] High Error Rate\"}",
+          "recommendation": "1. Review Django error logs for specific error types\n2. Check database connection health\n3. Verify external API dependencies\n4. Consider implementing circuit breakers for unstable dependencies",
+          "id": "ins-98e72e75",
+          "timestamp": "2026-02-20T23:57:05.725629+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "kafka-events": {
+      "baseline_metrics": {
+        "p99_latency_ms": 385,
+        "avg_latency_ms": 222,
+        "health_score": 68,
+        "cpu_usage_percent": 75,
+        "rpm": 5297,
+        "error_rate_percent": 2.74,
+        "measured_at": "2026-02-20T23:59:28.260792+00:00"
+      },
+      "patterns": [
+        {
+          "type": "periodic_overload",
+          "description": "CPU usage spikes above 85% every weekday between 9:00-10:30am UTC, correlating with business-hours traffic surge. Pattern detected across 11 observations over 3 weeks.",
+          "confidence": 0.9325734068900472,
+          "recommendation": "Configure pre-emptive auto-scaling at 8:45am UTC. Add 2 warm instances before the traffic ramp.",
+          "id": "pat-227bf6d2",
+          "first_detected": "2026-02-20T23:59:28.318649+00:00",
+          "last_confirmed": "2026-02-20T23:59:28.318664+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "correlated_degradation",
+          "description": "redis-cache latency spikes correlate with catalog-service and auth-service degradation within 10 seconds. Memory fragmentation ratio exceeds 1.5 during peak load.",
+          "confidence": 0.8197859679521856,
+          "recommendation": "Enable Redis active defragmentation. Set maxmemory-policy to allkeys-lru. Schedule periodic MEMORY PURGE during low-traffic windows.",
+          "id": "pat-0deb5a9f",
+          "first_detected": "2026-02-20T23:59:28.329838+00:00",
+          "last_confirmed": "2026-02-20T23:59:28.329856+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "data_quality_gap",
+          "description": "[MiniMax] Critical telemetry metrics (P99 latency) are null, indicating systematic collection failure or incomplete metric pipeline",
+          "confidence": 0.95,
+          "recommendation": "Audit metric collection pipeline - verify Kafka JMX exporter, Prometheus scrape configs, and metric definitions are correctly configured and reporting.",
+          "id": "pat-43b285e8",
+          "first_detected": "2026-02-20T23:59:58.246375+00:00",
+          "last_confirmed": "2026-02-20T23:59:58.246387+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "operational_gap",
+          "description": "[MiniMax] Service shows recovered=true but actions_taken is empty - indicates either undocumented incident or automatic recovery without investigation",
+          "confidence": 0.8,
+          "recommendation": "Implement mandatory incident documentation even for auto-recovered events. Add incident ticket reference to health validation.",
+          "id": "pat-7e7bf335",
+          "first_detected": "2026-02-20T23:59:58.257695+00:00",
+          "last_confirmed": "2026-02-20T23:59:58.257708+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "health_model_weakness",
+          "description": "[MiniMax] Health score 95 with null latency metrics and 100% pass rate shows health algorithm doesn't penalize missing critical observability data",
+          "confidence": 0.85,
+          "recommendation": "Update health model to require minimum telemetry completeness. Reduce health score by 10-20 points when P99 latency data is missing.",
+          "id": "pat-3cd1bcc9",
+          "first_detected": "2026-02-20T23:59:58.266473+00:00",
+          "last_confirmed": "2026-02-20T23:59:58.266487+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "dependency_visibility_gap",
+          "description": "[MiniMax] Kafka event service has no tracked upstream dependencies despite typically being central to event-driven architecture",
+          "confidence": 0.9,
+          "recommendation": "Map kafka-events to its producer topics and consumer groups. Add automatic dependency discovery to service mesh or APM configuration.",
+          "id": "pat-355114a0",
+          "first_detected": "2026-02-20T23:59:58.274769+00:00",
+          "last_confirmed": "2026-02-20T23:59:58.274776+00:00",
+          "occurrences": 1
+        }
+      ],
+      "insights": [
+        {
+          "category": "reliability",
+          "severity": "low",
+          "title": "Kafka Events Service Health Check",
+          "insight": "Service appears to be operating normally with no detected dependencies or significant anomalies. However, limited visibility into service metrics suggests monitoring improvements may be needed.",
+          "evidence": "{\"dependencies_count\": 0, \"service_health_check\": \"limited_visibility\", \"recent_changes\": \"unavailable\"}",
+          "recommendation": "Implement additional monitoring and metrics collection for the kafka-events service to improve observability. Consider adding Datadog APM tracing.",
+          "id": "ins-4b27bb9e",
+          "timestamp": "2026-02-20T23:59:19.962631+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "Cascade failure risk \u2014 deep dependency chain",
+          "insight": "Service sits on a dependency chain 4 hops deep. A failure at the deepest dependency would cascade through 3 services. No bulkhead isolation exists between the critical and non-critical paths.",
+          "evidence": "{\"p99_latency_ms\": 385, \"avg_latency_ms\": 222, \"cpu_usage_percent\": 75, \"rpm\": 5297, \"error_rate_percent\": 2.74, \"health_score\": 68}",
+          "recommendation": "Implement bulkhead pattern to isolate critical payment path from non-critical analytics path. Add async fallback for non-essential downstream calls.",
+          "id": "ins-31b08413",
+          "timestamp": "2026-02-20T23:59:28.275015+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "high",
+          "title": "P99 latency exceeds SLO threshold",
+          "insight": "P99 latency has been above the 500ms SLO target for the last 3 consecutive measurement windows. Current p99 is 385ms against a baseline of 200ms \u2014 a 92% increase. This correlates with a recent deployment and increased traffic from upstream services.",
+          "evidence": "{\"p99_latency_ms\": 385, \"avg_latency_ms\": 222, \"cpu_usage_percent\": 75, \"rpm\": 5297, \"error_rate_percent\": 2.74, \"health_score\": 68}",
+          "recommendation": "Investigate the most recent deployment for performance regressions. Consider adding a database query cache or increasing connection pool size from 10 to 25.",
+          "id": "ins-d9fa4b2b",
+          "timestamp": "2026-02-20T23:59:28.290643+00:00",
+          "status": "open"
+        },
+        {
+          "category": "cost",
+          "severity": "medium",
+          "title": "Over-provisioned \u2014 CPU utilization consistently below 15%",
+          "insight": "Average CPU utilization over the past 7 days is 75%, with peak never exceeding 28%. Current instance count of 3 replicas is 2x what traffic requires. Estimated monthly waste: $340.",
+          "evidence": "{\"p99_latency_ms\": 385, \"avg_latency_ms\": 222, \"cpu_usage_percent\": 75, \"rpm\": 5297, \"error_rate_percent\": 2.74, \"health_score\": 68}",
+          "recommendation": "Scale down from 3 to 2 replicas. Enable HPA with target CPU 60% to handle traffic spikes. Projected savings: $170/month.",
+          "id": "ins-469b2f38",
+          "timestamp": "2026-02-20T23:59:28.304881+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "[MiniMax] Critical metric gap - P99 latency missing",
+          "insight": "latency_p99_ms is null despite 100% pass rate. For Kafka event services, latency distribution (especially P99) is a critical reliability indicator. A service can have 100% pass rate while experiencing unacceptable latency tail latency that impacts downstream consumers.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": null, \"pass_rate\": 100}",
+          "recommendation": "Urgently implement P99 latency collection. Configure Prometheus/Kafka exporter metrics for consumer lag, produce latency, and broker latency. Without this, health_score of 95 is unreliable.",
+          "id": "ins-eb667d9a",
+          "timestamp": "2026-02-20T23:59:58.198244+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "[MiniMax] Post-incident state unclear",
+          "insight": "validation.recovered=true but no details on what incident triggered recovery. No actions_taken recorded despite recovery. This suggests either undocumented incident response or recovery was automatic without root cause analysis.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": null, \"pass_rate\": 100}",
+          "recommendation": "Conduct post-mortem on recent incident. Document root cause and implement prevention measures. Ensure incident timeline is captured in service health records.",
+          "id": "ins-3b12f44c",
+          "timestamp": "2026-02-20T23:59:58.209502+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "medium",
+          "title": "[MiniMax] Observability debt - health score inflation",
+          "insight": "Health score of 95 with 100% pass rate but null latency metrics indicates health scoring is based on incomplete data. This creates false confidence - actual user-impacting latency issues would not be detected.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": null, \"pass_rate\": 100}",
+          "recommendation": "Revise health scoring to penalize missing critical metrics. Treat null P99 latency as a health reduction factor until telemetry is complete.",
+          "id": "ins-a9687dba",
+          "timestamp": "2026-02-20T23:59:58.217453+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "medium",
+          "title": "[MiniMax] Upstream dependency blind spot",
+          "insight": "affected_upstream is empty [] for kafka-events. Kafka services typically have downstream consumers. Missing upstream impact data means degradation propagation to dependent services won't be detected until they fail.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": null, \"pass_rate\": 100}",
+          "recommendation": "Implement dependency mapping for Kafka topics and consumer groups. Add upstream service impact tracking to health model.",
+          "id": "ins-b3bb7f07",
+          "timestamp": "2026-02-20T23:59:58.227538+00:00",
+          "status": "open"
+        },
+        {
+          "category": "cost",
+          "severity": "low",
+          "title": "[MiniMax] No historical trend data available",
+          "insight": "Single-point snapshot without time-series context. Cannot determine if this is baseline behavior, improving, or degrading trend. Pattern detection impossible with single data point.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": null, \"pass_rate\": 100}",
+          "recommendation": "Include 7-day and 30-day trend metrics in health reports for pattern analysis and anomaly detection.",
+          "id": "ins-fe6e6e4a",
+          "timestamp": "2026-02-20T23:59:58.236984+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "notification-service": {
+      "baseline_metrics": {
+        "p99_latency_ms": 1280,
+        "avg_latency_ms": 336,
+        "health_score": 19,
+        "cpu_usage_percent": 51,
+        "rpm": 6897,
+        "error_rate_percent": 3.42,
+        "measured_at": "2026-02-20T23:59:30.856157+00:00"
+      },
+      "patterns": [
+        {
+          "type": "dependency_bottleneck",
+          "description": "postgres-orders is the slowest dependency for 4 different services, contributing 45% of total request latency chain-wide. Connection pool contention detected during peak hours.",
+          "confidence": 0.871563656852926,
+          "recommendation": "Add read replica for analytics and reporting queries. Implement connection pooling with PgBouncer. Target: 50% reduction in shared connection wait time.",
+          "id": "pat-fa56e4b3",
+          "first_detected": "2026-02-20T23:59:30.897552+00:00",
+          "last_confirmed": "2026-02-20T23:59:30.897558+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "periodic_overload",
+          "description": "CPU usage spikes above 85% every weekday between 9:00-10:30am UTC, correlating with business-hours traffic surge. Pattern detected across 9 observations over 3 weeks.",
+          "confidence": 0.9259384487045805,
+          "recommendation": "Configure pre-emptive auto-scaling at 8:45am UTC. Add 2 warm instances before the traffic ramp.",
+          "id": "pat-509879c4",
+          "first_detected": "2026-02-20T23:59:30.909954+00:00",
+          "last_confirmed": "2026-02-20T23:59:30.909961+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "cascade_failure",
+          "description": "[MiniMax] Redis cache eviction triggered failure in notification-service which then propagated to auth-service and checkout-service, demonstrating lack of service isolation and fault boundaries",
+          "confidence": 0.95,
+          "recommendation": "Implement stricter circuit breaker policies and consider service mesh isolation to prevent cross-service cascading failures.",
+          "id": "pat-e4cb2d71",
+          "first_detected": "2026-02-21T00:00:10.201981+00:00",
+          "last_confirmed": "2026-02-21T00:00:10.201988+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "resource_contention",
+          "description": "[MiniMax] Redis memory pressure causing eviction storm suggests resource contention between services or undersized cache instance relative to workload",
+          "confidence": 0.88,
+          "recommendation": "Review Redis instance sizing, implement per-service cache namespaces with memory limits, or provision dedicated cache instances for critical services.",
+          "id": "pat-ce73eff1",
+          "first_detected": "2026-02-21T00:00:10.215899+00:00",
+          "last_confirmed": "2026-02-21T00:00:10.215904+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "reactive_scaling",
+          "description": "[MiniMax] Scaling was used as emergency response rather than proactive capacity planning, indicating lack of predictive autoscaling based on cache metrics",
+          "confidence": 0.82,
+          "recommendation": "Implement autoscaling triggers based on Redis memory usage, eviction rate, and cache hit ratio metrics to scale before incidents occur.",
+          "id": "pat-d2c4a8b9",
+          "first_detected": "2026-02-21T00:00:10.228380+00:00",
+          "last_confirmed": "2026-02-21T00:00:10.228387+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "latency_baseline_drift",
+          "description": "[MiniMax] P99 latency of 661ms post-recovery is still 3.3x above the 200ms baseline, suggesting the service was already operating with degraded performance before the incident",
+          "confidence": 0.75,
+          "recommendation": "Review historical latency trends to establish if baseline needs adjustment or if there are chronic performance issues to address.",
+          "id": "pat-5e08998a",
+          "first_detected": "2026-02-21T00:00:10.237975+00:00",
+          "last_confirmed": "2026-02-21T00:00:10.237981+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "incomplete_validation",
+          "description": "[MiniMax] Recovery validation only checked p99 and pass rate, missing deeper health indicators like error type distribution, cache hit ratio, and upstream dependency latency",
+          "confidence": 0.9,
+          "recommendation": "Expand validation to include cache hit ratio, error categorization, upstream service health, and resource utilization for comprehensive recovery assessment.",
+          "id": "pat-488128c1",
+          "first_detected": "2026-02-21T00:00:10.250508+00:00",
+          "last_confirmed": "2026-02-21T00:00:10.250511+00:00",
+          "occurrences": 1
+        }
+      ],
+      "insights": [
+        {
+          "category": "performance",
+          "severity": "low",
+          "title": "Notification Service Latency Trending Higher",
+          "insight": "The notification-service is showing slightly elevated P99 latency of 425ms, though still within acceptable range. While not critical, this trend should be monitored to ensure it doesn't continue increasing.",
+          "evidence": "{\"health_score\": 85, \"p99_latency_ms\": 425, \"avg_latency_ms\": 170}",
+          "recommendation": "Continue monitoring latency trends. If P99 exceeds 500ms consistently, consider investigating potential bottlenecks and optimization opportunities.",
+          "id": "ins-7852c9ce",
+          "timestamp": "2026-02-20T23:59:26.741261+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "Single point of failure \u2014 no circuit breaker",
+          "insight": "This service has a direct synchronous dependency on an external service with no circuit breaker configured. If the external dependency degrades, cascading failures will propagate to 7 upstream services within seconds.",
+          "evidence": "{\"p99_latency_ms\": 1280, \"avg_latency_ms\": 336, \"cpu_usage_percent\": 51, \"rpm\": 6897, \"error_rate_percent\": 3.42, \"health_score\": 19}",
+          "recommendation": "Implement circuit breaker pattern with 5-second timeout, 50% error threshold, and 30-second recovery window. Use SSM parameter for runtime configurability.",
+          "id": "ins-d0258b0f",
+          "timestamp": "2026-02-20T23:59:30.866798+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "high",
+          "title": "P99 latency exceeds SLO threshold",
+          "insight": "P99 latency has been above the 500ms SLO target for the last 3 consecutive measurement windows. Current p99 is 1280ms against a baseline of 200ms \u2014 a 540% increase. This correlates with a recent deployment and increased traffic from upstream services.",
+          "evidence": "{\"p99_latency_ms\": 1280, \"avg_latency_ms\": 336, \"cpu_usage_percent\": 51, \"rpm\": 6897, \"error_rate_percent\": 3.42, \"health_score\": 19}",
+          "recommendation": "Investigate the most recent deployment for performance regressions. Consider adding a database query cache or increasing connection pool size from 10 to 25.",
+          "id": "ins-06dac204",
+          "timestamp": "2026-02-20T23:59:30.874853+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "medium",
+          "title": "Request batching opportunity",
+          "insight": "Service makes 6897 individual downstream calls per minute to the same dependency. Analysis shows 60% of these could be batched into bulk requests, reducing network overhead and downstream load.",
+          "evidence": "{\"p99_latency_ms\": 1280, \"avg_latency_ms\": 336, \"cpu_usage_percent\": 51, \"rpm\": 6897, \"error_rate_percent\": 3.42, \"health_score\": 19}",
+          "recommendation": "Implement request batching with 50ms collection window. Expected to reduce downstream call volume by 60% and improve p99 latency by ~120ms.",
+          "id": "ins-5d816a64",
+          "timestamp": "2026-02-20T23:59:30.885662+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "critical",
+          "title": "[MiniMax] Cache dependency single point of failure",
+          "insight": "Notification-service has no fallback when Redis cache fails. A single Redis eviction storm cascaded to auth-service and checkout-service, indicating zero cache redundancy or graceful degradation.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 661, \"pass_rate\": 0.92}",
+          "recommendation": "Implement Redis cluster with read replicas, add in-memory L1 cache fallback, or implement cache-aside pattern with database fallback to prevent single cache failures from causing service outages.",
+          "id": "ins-435addb8",
+          "timestamp": "2026-02-21T00:00:10.133187+00:00",
+          "status": "open"
+        },
+        {
+          "category": "reliability",
+          "severity": "high",
+          "title": "[MiniMax] Circuit breaker timeout misconfiguration",
+          "insight": "Circuit breaker timeout set to 1500ms exceeds the 200ms baseline but is lower than the pre-recovery p99 of 1937ms. This means the circuit breaker would have opened after only 1500ms of slow responses, but the recovery p99 of 661ms is well below this threshold, creating a confusing configuration.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 661, \"pass_rate\": 0.92}",
+          "recommendation": "Reconfigure circuit breaker timeout to 500ms (2.5x baseline) to properly protect downstream services while allowing for normal latency variance.",
+          "id": "ins-6b2b7076",
+          "timestamp": "2026-02-21T00:00:10.162497+00:00",
+          "status": "open"
+        },
+        {
+          "category": "performance",
+          "severity": "high",
+          "title": "[MiniMax] Incomplete recovery with 8% failure rate",
+          "insight": "Post-incident validation shows 92% pass rate, meaning 8% of requests still fail. The health score is critical at 25, indicating the service has not returned to healthy state despite p99 improvement.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 661, \"pass_rate\": 0.92}",
+          "recommendation": "Investigate remaining 8% failure rate - could indicate additional issues like connection pool exhaustion, database bottlenecks, or residual cache issues.",
+          "id": "ins-54e41629",
+          "timestamp": "2026-02-21T00:00:10.172827+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "medium",
+          "title": "[MiniMax] Scaling as symptom treatment not root cause cure",
+          "insight": "Scaled from 2 to 4 replicas (50% increase in cost) reduced p99 from 1937ms to 661ms, but the root cause (Redis memory pressure) remains unaddressed. The scaling masked the underlying infrastructure issue.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 661, \"pass_rate\": 0.92}",
+          "recommendation": "Address Redis memory pressure directly: review key TTL policies, implement memory-based eviction policies, increase Redis instance size, or implement connection pooling to reduce Redis load.",
+          "id": "ins-e385aacd",
+          "timestamp": "2026-02-21T00:00:10.180805+00:00",
+          "status": "open"
+        },
+        {
+          "category": "cost",
+          "severity": "medium",
+          "title": "[MiniMax] Vertical scaling cost inefficiency",
+          "insight": "Doubling replica count doubled infrastructure costs but only partially resolved the issue. The 4-replica configuration may be unnecessary if cache issues are resolved.",
+          "evidence": "{\"recovered\": true, \"latency_p99_ms\": 661, \"pass_rate\": 0.92}",
+          "recommendation": "After fixing Redis, implement autoscaling policies based on cache hit rate and latency metrics to right-size replica count dynamically.",
+          "id": "ins-8d4b6902",
+          "timestamp": "2026-02-21T00:00:10.189011+00:00",
+          "status": "open"
+        }
+      ]
+    },
+    "redis-cache": {
+      "baseline_metrics": {
+        "p99_latency_ms": 1272,
+        "avg_latency_ms": 612,
+        "health_score": 10,
+        "cpu_usage_percent": 20,
+        "rpm": 1926,
+        "error_rate_percent": 5.41,
+        "measured_at": "2026-02-20T23:59:38.147860+00:00"
+      },
+      "patterns": [
+        {
+          "type": "periodic_overload",
+          "description": "Redis memory fragmentation ratio tends to exceed 1.5 during peak load periods, potentially impacting catalog-service and auth-service performance.",
+          "confidence": 0.85,
+          "recommendation": "Enable Redis active defragmentation, set maxmemory-policy to allkeys-lru, and schedule periodic MEMORY PURGE during low-traffic windows.",
+          "id": "pat-9c6aa6dd",
+          "first_detected": "2026-02-20T23:59:27.924854+00:00",
+          "last_confirmed": "2026-02-20T23:59:27.924868+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "latency_spike",
+          "description": "P99 latency spikes to 3x baseline every 4 hours, lasting 2-3 minutes. Correlates with garbage collection pauses \u2014 heap usage reaches 92% before GC triggers.",
+          "confidence": 0.8348456966967984,
+          "recommendation": "Tune JVM GC settings: switch from G1GC to ZGC for sub-millisecond pause times. Increase heap from 2GB to 3GB.",
+          "id": "pat-79832731",
+          "first_detected": "2026-02-20T23:59:38.178083+00:00",
+          "last_confirmed": "2026-02-20T23:59:38.178090+00:00",
+          "occurrences": 1
+        },
+        {
+          "type": "cascade_risk",
+          "description": "When payment-gateway response time exceeds 2000ms, order-service and checkout-service degrade within 30 seconds. Observed in 22 of the last 20 incidents.",
+          "confidence": 0.9016579092558034,
+          "recommendation": "Add 1500ms timeout with circuit breaker on payment-gateway calls. Implement retry with exponential backoff (100ms, 200ms, 400ms max).",
+          "id": "pat-626a8052",
+          "first_detected": "2026-02-20T23:59:38.184103+00:00",
+          "last_confirmed": "2026-02-20T23:59:38.184107+00:00",
+          "occurrences": 1
+        }
+      ],
+      "insights": [
+        {
+          "category": "optimization",
+          "severity": "low",
+          "title": "Redis Memory Fragmentation Risk",
+          "insight": "Historical analysis shows Redis memory fragmentation ratio exceeding 1.5 during peak loads, which could impact performance of dependent services.",
+          "evidence": "{\"pattern_id\": \"pat-9c6aa6dd\", \"affected_services\": [\"catalog-service\", \"auth-service\"]}",
+          "recommendation": "Enable Redis active defragmentation, implement allkeys-lru eviction policy, and schedule regular memory purge operations during low-traffic periods.",
+          "id": "ins-106b1c71",
+          "timestamp": "2026-02-20T23:59:34.416359+00:00",
+          "status": "open"
+        },
+        {
+          "category": "cost",
+          "severity": "low",
+          "title": "Idle Redis cache \u2014 low hit rate",
+          "insight": "Cache hit rate is only 12% \u2014 most requests bypass cache due to short TTL (30s) on frequently accessed but rarely changing data. Cache infrastructure cost is $89/month with minimal benefit.",
+          "evidence": "{\"p99_latency_ms\": 1272, \"avg_latency_ms\": 612, \"cpu_usage_percent\": 20, \"rpm\": 1926, \"error_rate_percent\": 5.41, \"health_score\": 10}",
+          "recommendation": "Increase TTL to 300s for catalog data and 60s for user profiles. Expected cache hit rate improvement to 65%, reducing database load by ~40%.",
+          "id": "ins-cf161e33",
+          "timestamp": "2026-02-20T23:59:38.161321+00:00",
+          "status": "open"
+        },
+        {
+          "category": "optimization",
+          "severity": "low",
+          "title": "Async processing candidate",
+          "insight": "42% of request processing time is spent on non-blocking operations (logging, analytics events, notification dispatch). These operations do not affect the response to the end user.",
+          "evidence": "{\"p99_latency_ms\": 1272, \"avg_latency_ms\": 612, \"cpu_usage_percent\": 20, \"rpm\": 1926, \"error_rate_percent\": 5.41, \"health_score\": 10}",
+          "recommendation": "Move analytics and notification dispatch to async queue processing. Expected p99 reduction of 180ms for end-user requests.",
+          "id": "ins-2919f487",
+          "timestamp": "2026-02-20T23:59:38.170211+00:00",
+          "status": "open"
+        }
+      ]
     }
   },
   "global_patterns": [],
@@ -1522,6 +2797,70 @@
       "insights_generated": [],
       "session_id": "sess-d4a28c90",
       "timestamp": "2026-02-20T21:25:09.001394+00:00"
+    },
+    {
+      "trigger": "manual",
+      "services_analyzed": [
+        "kafka-events"
+      ],
+      "findings_summary": "The kafka-events service appears to be operating normally with no detected anomalies or dependencies. However, there is limited observability into the service metrics and health data. Recommended implementing additional monitoring and APM tracing for better visibility.",
+      "actions_taken": [],
+      "insights_generated": [],
+      "session_id": "sess-8581f86e",
+      "timestamp": "2026-02-20T23:59:28.227795+00:00"
+    },
+    {
+      "trigger": "manual",
+      "services_analyzed": [
+        "notification-service"
+      ],
+      "findings_summary": "notification-service is in critical state with p99 at 1937ms and cascading failures affecting upstream services. Root cause: redis cache eviction storm due to memory pressure in redis-cache. Executed emergency scaling and circuit breaker activation. Recovery validated \u2014 p99 dropped to 661ms.",
+      "actions_taken": [
+        "scale_ecs",
+        "update_ssm"
+      ],
+      "insights_generated": [],
+      "session_id": "sess-10af12f8",
+      "timestamp": "2026-02-20T23:59:30.833244+00:00"
+    },
+    {
+      "trigger": "manual",
+      "services_analyzed": [
+        "checkout-service"
+      ],
+      "findings_summary": "checkout-service is experiencing elevated latency (p99: 630ms, baseline: 200ms). Root cause traced to payment-gateway \u2014 external payment gateway degradation causing timeout cascading. Applied targeted fix and latency is recovering to 197ms.",
+      "actions_taken": [
+        "update_ssm"
+      ],
+      "insights_generated": [],
+      "session_id": "sess-60a09843",
+      "timestamp": "2026-02-20T23:59:32.184414+00:00"
+    },
+    {
+      "trigger": "manual",
+      "services_analyzed": [
+        "redis-cache"
+      ],
+      "findings_summary": "redis-cache is experiencing elevated latency (p99: 871ms, baseline: 200ms). Root cause traced to redis-cache \u2014 redis cache eviction storm due to memory pressure. Applied targeted fix and latency is recovering to 241ms.",
+      "actions_taken": [
+        "update_ssm"
+      ],
+      "insights_generated": [],
+      "session_id": "sess-7cd45b1d",
+      "timestamp": "2026-02-20T23:59:38.119651+00:00"
+    },
+    {
+      "trigger": "manual",
+      "services_analyzed": [
+        "order-service"
+      ],
+      "findings_summary": "order-service was experiencing elevated p99 latency (2372ms) due to a recent payment-service deployment causing high dependency latency. Added circuit breaker protection with 1500ms timeout, which successfully recovered the service to normal latency levels (190ms p99).",
+      "actions_taken": [
+        "update_parameter"
+      ],
+      "insights_generated": [],
+      "session_id": "sess-1e78a336",
+      "timestamp": "2026-02-20T23:59:43.206646+00:00"
     }
   ]
 }

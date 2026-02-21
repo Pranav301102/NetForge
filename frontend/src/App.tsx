@@ -169,7 +169,7 @@ export default function DeployOpsCenter() {
 
   const [agentAnnotations, setAgentAnnotations] = useState<AgentAnnotation[]>([]);
   const [remediationFeed, setRemediationFeed] = useState<ActionLog[]>([]);
-  const [validationResult, setValidationResult] = useState<{ service: string, passed: boolean, msg: string }>({ service: "order-service", passed: true, msg: "TestSprite Validation Passed" });
+  const [validationResult, setValidationResult] = useState<{ service: string, passed: boolean, msg: string }>({ service: "", passed: false, msg: "No validation run yet — click RUN to start." });
 
   const [activeRemediations, setActiveRemediations] = useState<Record<string, RemediationState>>({});
   const [apiStatus, setApiStatus] = useState<"loading" | "connected" | "offline">("loading");
@@ -195,6 +195,11 @@ export default function DeployOpsCenter() {
   const [scalingInProgress, setScalingInProgress] = useState(false);
   const [validationResults, setValidationResults] = useState<any[]>([]);
   const [showScaleReport, setShowScaleReport] = useState(false);
+
+  // Network testing agent state
+  const [netTestStrategies, setNetTestStrategies] = useState<any[]>([]);
+  const [netTestReport, setNetTestReport] = useState<any>(null);
+  const [runningNetTest, setRunningNetTest] = useState(false);
 
   // Agent live activity feed
   const [agentActivity, setAgentActivity] = useState<any[]>([]);
@@ -522,7 +527,19 @@ export default function DeployOpsCenter() {
       const res = await fetch("/api/cluster/validations");
       if (res.ok) {
         const data = await res.json();
-        setValidationResults(data.validations || []);
+        const results: any[] = data.validations || [];
+        setValidationResults(results);
+        // Sync the agent-tab summary card with the latest real result
+        if (results.length > 0) {
+          const latest = results[results.length - 1];
+          setValidationResult({
+            service: latest.trigger_replica || "network",
+            passed: latest.status === "passed",
+            msg: latest.status === "passed"
+              ? `${latest.endpoints_passed}/${latest.endpoints_tested} endpoints OK — ${latest.total_duration_ms}ms`
+              : `${latest.endpoints_failed} endpoint(s) failing — ${latest.status}`,
+          });
+        }
       } else {
         console.warn("[cluster/validations] fetch failed:", res.status);
       }
@@ -538,10 +555,42 @@ export default function DeployOpsCenter() {
     } catch { }
   };
 
+  // ── Network testing agent ────────────────────────────────────────────────
+  const fetchNetTestStrategies = async () => {
+    try {
+      const res = await fetch("/api/network-test/strategies");
+      if (res.ok) {
+        const data = await res.json();
+        setNetTestStrategies(data.strategies || []);
+      }
+    } catch (err) {
+      console.warn("[net-test/strategies] fetch error:", err);
+    }
+  };
+
+  const handleRunNetworkTests = async () => {
+    setRunningNetTest(true);
+    try {
+      const res = await fetch("/api/network-test/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+      if (res.ok) {
+        const report = await res.json();
+        setNetTestReport(report);
+        // Also refresh strategies in case memory changed
+        fetchNetTestStrategies();
+      } else {
+        console.warn("[net-test/run] failed:", res.status);
+      }
+    } catch (err) {
+      console.warn("[net-test/run] error:", err);
+    }
+    setRunningNetTest(false);
+  };
+
   useEffect(() => {
     if (rightTab === "scaling") {
       fetchScaleReport();
       fetchValidations();
+      fetchNetTestStrategies();
     }
   }, [rightTab]);
 
@@ -1752,8 +1801,8 @@ export default function DeployOpsCenter() {
                       </div>
                     </div>
 
-                    {/* Right: Validation Results + Report Summary */}
-                    <div style={{ flex: 1, overflowY: "auto" }}>
+                    {/* Right: Validation Results + Network Tester + Report Summary */}
+                    <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
 
                       {/* TestSprite Validation Results */}
                       <div style={{ padding: "12px 16px", background: "#060c18", fontSize: 9, color: "#4a6a8a", letterSpacing: 1, borderBottom: "1px solid #0e1e2e", display: "flex", alignItems: "center", gap: 6 }}>
@@ -1799,6 +1848,105 @@ export default function DeployOpsCenter() {
                           </div>
                         ))
                       )}
+
+                      {/* ── Network Testing Agent ─────────────────────── */}
+                      <div style={{ borderTop: "1px solid #0e1e2e" }}>
+                        <div style={{ padding: "12px 16px", background: "#060c18", fontSize: 9, color: "#00e5a0", letterSpacing: 1, borderBottom: "1px solid #0e1e2e", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <Network size={10} color="#00e5a0" /> NETWORK TESTING AGENT
+                            {netTestStrategies.length > 0 && (
+                              <span style={{ background: "#00e5a022", color: "#00e5a0", fontSize: 8, padding: "1px 6px", borderRadius: 8 }}>
+                                {netTestStrategies.length} STRATEGIES
+                              </span>
+                            )}
+                          </span>
+                          <button
+                            onClick={handleRunNetworkTests}
+                            disabled={runningNetTest}
+                            style={{
+                              background: runningNetTest ? "#1a2a3a" : "#00e5a015",
+                              border: `1px solid ${runningNetTest ? "#3a5a7a" : "#00e5a044"}`,
+                              color: runningNetTest ? "#4a6a8a" : "#00e5a0",
+                              padding: "2px 10px", fontSize: 8, borderRadius: 2,
+                              cursor: runningNetTest ? "wait" : "pointer",
+                              fontFamily: "'DM Mono', monospace", letterSpacing: 1,
+                              display: "flex", alignItems: "center", gap: 4,
+                            }}
+                          >
+                            <Play size={8} /> {runningNetTest ? "RUNNING..." : "RUN TESTS"}
+                          </button>
+                        </div>
+
+                        {/* Strategy list (derived from memory) */}
+                        {netTestStrategies.length === 0 ? (
+                          <div style={{ padding: 16, fontSize: 10, color: "#4a6a8a", textAlign: "center" }}>
+                            No strategies yet — generate insights first so the agent can derive test plans.
+                          </div>
+                        ) : (
+                          <div style={{ padding: "8px 16px" }}>
+                            {netTestStrategies.map((strat: any) => {
+                              const result = netTestReport?.strategy_results?.find((r: any) => r.strategy_id === strat.id);
+                              const statusColor = !result ? "#3a5a7a" : result.status === "passed" ? "#00e5a0" : result.status === "partial" ? "#f5a623" : "#ff3b5c";
+                              const typeTag: Record<string, string> = {
+                                health_sweep: "SWEEP",
+                                latency_probe: "LATENCY",
+                                load_burst: "BURST",
+                                cascade_sim: "CASCADE",
+                                dependency_chain: "DEP CHAIN",
+                              };
+                              return (
+                                <div key={strat.id} style={{
+                                  padding: "8px 0",
+                                  borderBottom: "1px solid #0e1e2e08",
+                                  display: "flex", gap: 10, alignItems: "flex-start",
+                                }}>
+                                  <div style={{ flexShrink: 0, marginTop: 1 }}>
+                                    <span style={{
+                                      fontSize: 7, padding: "1px 5px", borderRadius: 2,
+                                      background: `${statusColor}22`, color: statusColor, letterSpacing: 1,
+                                    }}>
+                                      {typeTag[strat.type] || strat.type.toUpperCase()}
+                                    </span>
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontSize: 10, color: "#c8daf0", marginBottom: 2, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                      <span>{strat.name}</span>
+                                      {result && (
+                                        <span style={{ fontSize: 8, color: statusColor, flexShrink: 0, marginLeft: 8 }}>
+                                          {result.tests_passed}/{result.tests_run} · {result.duration_ms}ms
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div style={{ fontSize: 9, color: "#4a6a8a", lineHeight: 1.4 }}>{strat.description}</div>
+                                    {result && (result.p99_ms || result.error_rate_pct > 0) && (
+                                      <div style={{ fontSize: 8, color: "#6a8aa0", marginTop: 3, display: "flex", gap: 10 }}>
+                                        {result.p50_ms != null && <span>p50: <span style={{ color: "#8ba0b8" }}>{result.p50_ms}ms</span></span>}
+                                        {result.p95_ms != null && <span>p95: <span style={{ color: result.p95_ms > 500 ? "#f5a623" : "#8ba0b8" }}>{result.p95_ms}ms</span></span>}
+                                        {result.p99_ms != null && <span>p99: <span style={{ color: result.p99_ms > 1000 ? "#ff3b5c" : "#8ba0b8" }}>{result.p99_ms}ms</span></span>}
+                                        {result.error_rate_pct > 0 && <span>err: <span style={{ color: "#ff3b5c" }}>{result.error_rate_pct}%</span></span>}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Recommendations from last run */}
+                        {netTestReport?.recommendations?.length > 0 && (
+                          <div style={{ margin: "0 16px 12px", padding: 10, background: "#0a111c", border: "1px solid #0e1e2e", borderRadius: 4 }}>
+                            <div style={{ fontSize: 8, color: "#f5a623", letterSpacing: 1, marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                              <AlertTriangle size={8} /> RECOMMENDATIONS
+                            </div>
+                            {netTestReport.recommendations.map((rec: string, i: number) => (
+                              <div key={i} style={{ fontSize: 9, color: "#8ba0b8", lineHeight: 1.5, borderLeft: "2px solid #f5a623", paddingLeft: 8, marginBottom: 4 }}>
+                                {rec}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
 
                       {/* Scale Report Summary */}
                       {scaleReport && (

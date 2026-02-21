@@ -10,7 +10,7 @@ const root = ReactDOM.createRoot(
 );
 root.render(
   <React.StrictMode>
-    <CopilotKit publicApiKey="dummy_key_for_hackathon" runtimeUrl="http://localhost:8000/copilotkit" agent="default">
+    <CopilotKit publicApiKey="ck_pub_16fefb799d506d90a688889ee017d055" runtimeUrl="http://localhost:8000/copilotkit" agent="default">
       <App />
     </CopilotKit>
   </React.StrictMode>
